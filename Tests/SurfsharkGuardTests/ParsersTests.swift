@@ -83,11 +83,11 @@ final class ParsersTests: XCTestCase {
     }
 
     func testUpdateCheckVersions() {
-        XCTAssertEqual(UpdateCheck.normalize("v1.4"), "1.4")
-        XCTAssertTrue(UpdateCheck.isNewer("v1.4", than: "1.3"))
+        XCTAssertEqual(UpdateCheck.normalize("v1.3"), "1.3")
+        XCTAssertTrue(UpdateCheck.isNewer("v1.3", than: "1.2"))
         XCTAssertTrue(UpdateCheck.isNewer("1.10", than: "1.2"))
         XCTAssertFalse(UpdateCheck.isNewer("1.3", than: "1.3"))
-        XCTAssertFalse(UpdateCheck.isNewer("1.2", than: "1.4"))
+        XCTAssertFalse(UpdateCheck.isNewer("1.2", than: "1.3"))
         let data = Data(#"{"tag_name":"v1.2","html_url":"https://example.com/r"}"#.utf8)
         XCTAssertEqual(UpdateCheck.parseLatest(from: data)?.tag, "v1.2")
     }

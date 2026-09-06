@@ -2,7 +2,14 @@
 
 Unofficial macOS menu-bar helper (Apple Silicon and Intel, macOS 13+) that keeps [qBittorrent](https://www.qbittorrent.org) bound to the current VPN tunnel ([Surfshark](https://surfshark.com), plus unofficial detection for Mullvad, Proton VPN, or any WireGuard).
 
-**Download:** [latest release](https://github.com/Leumas123-cyber/surfshark-guard/releases/latest) — two DMGs: **arm64** (Apple Silicon only) and **universal** (Apple Silicon + Intel).
+**Current version is 1.3.** Download from the [latest release](https://github.com/Leumas123-cyber/surfshark-guard/releases/latest) — pick **one** DMG:
+
+| File | Who it is for |
+|---|---|
+| [`SurfsharkGuard-1.3-arm64.dmg`](https://github.com/Leumas123-cyber/surfshark-guard/releases/latest) | Apple Silicon only |
+| [`SurfsharkGuard-1.3-universal.dmg`](https://github.com/Leumas123-cyber/surfshark-guard/releases/latest) | Apple Silicon or Intel |
+
+Same app, two separate binaries. There is no 1.4.
 
 This is **not** a Surfshark or qBittorrent product. It is a hobby upload. I vibe-coded it and I am **not** an expert on this codebase. The notes below describe how the project is *supposed* to work. If something breaks, **fix it yourself** (or don’t use it). There is no support.
 
@@ -22,6 +29,17 @@ This app watches the tunnel and rewrites qBittorrent’s interface binding so yo
 - **No warranty.** MIT already says this. I’ll say it again: I vibe-coded this. I do not really know, in a professional sense, that every path is correct. Use at your own risk. If it fails, fix it or delete it.
 - **Not legal advice.** This README is not a lawyer. If you need one, get one.
 
+## What’s in 1.3
+
+- Two Release DMGs (arm64-only, and universal)
+- Pause torrents if the VPN tunnel drops (localhost Web UI)
+- Live binding from qBittorrent preferences, not only the ini file
+- Faster watch via `NWPathMonitor`, plus the 5 s timer
+- IPv6 leak hint, setup checklist, more VPN names, app icon
+- In-app check against GitHub Releases (download page only)
+
+Older public tags are **v1.1** and **v1.2**. Use **v1.3**.
+
 ## First-run on a downloaded DMG
 
 The DMG is ad-hoc signed (no paid Apple Developer ID / notarization). macOS Gatekeeper will complain once.
@@ -34,12 +52,12 @@ The DMG is ad-hoc signed (no paid Apple Developer ID / notarization). macOS Gate
 xattr -dr com.apple.quarantine /Applications/SurfsharkGuard.app
 ```
 
-Releases ship **two** DMGs, same version, different binaries:
+1.3 ships **two** DMGs (do not mix them up):
 
-- `SurfsharkGuard-*-arm64.dmg` — Apple Silicon only
-- `SurfsharkGuard-*-universal.dmg` — Apple Silicon + Intel (`arm64` + `x86_64`)
+- `SurfsharkGuard-1.3-arm64.dmg` — Apple Silicon only
+- `SurfsharkGuard-1.3-universal.dmg` — Apple Silicon + Intel (`arm64` + `x86_64`)
 
-macOS 13 or newer.
+macOS 13 or newer. The app inside either image is still named **Surfshark Guard**.
 
 ## Using it
 
