@@ -31,3 +31,10 @@ jobs:
           echo "$UNI_ARCHS" | grep -q arm64
           echo "$UNI_ARCHS" | grep -q x86_64
           ls -lh build/SurfsharkGuard-*-arm64.dmg build/SurfsharkGuard-*-universal.dmg
+      - name: Keep DMGs as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmgs
+          path: |
+            build/SurfsharkGuard-*-arm64.dmg
+            build/SurfsharkGuard-*-universal.dmg

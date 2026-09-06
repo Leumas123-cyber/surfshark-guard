@@ -92,6 +92,15 @@ final class ParsersTests: XCTestCase {
         XCTAssertEqual(UpdateCheck.parseLatest(from: data)?.tag, "v1.2")
     }
 
+    func testMenuBarTooltip() {
+        XCTAssertEqual(MenuBarTooltip.text(tunnel: "utun14", qbInterface: "utun14"),
+                       "utun14 · sealed")
+        XCTAssertTrue(MenuBarTooltip.text(tunnel: "utun14", qbInterface: "en0")
+            .contains("leak risk"))
+        XCTAssertEqual(MenuBarTooltip.text(tunnel: nil, qbInterface: "en0"),
+                       "No VPN tunnel")
+    }
+
     func testVPNProviderMatching() {
         XCTAssertTrue(VPNProvider.surfshark.matches("123 /Applications/Surfshark.app"))
         XCTAssertFalse(VPNProvider.surfshark.matches("123 SurfsharkGuard"))

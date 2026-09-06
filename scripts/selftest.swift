@@ -91,6 +91,11 @@ expect(replaced.contains("utun14") && !replaced.contains("utun7"), "ini replace"
 let crlf = IniEditor.binding(in: "[BitTorrent]\r\nSession\\Interface=utun2\r\n")
 expect(crlf.iface == "utun2", "ini crlf")
 
+print("== menu bar tooltip ==")
+expect(MenuBarTooltip.text(tunnel: "utun14", qbInterface: "utun14") == "utun14 · sealed", "sealed tooltip")
+expect(MenuBarTooltip.text(tunnel: "utun14", qbInterface: "en0").contains("leak risk"), "wrong-binding tooltip")
+expect(MenuBarTooltip.text(tunnel: nil, qbInterface: "en0") == "No VPN tunnel", "no-tunnel tooltip")
+
 print("== update check ==")
 expect(UpdateCheck.normalize("v1.3") == "1.3", "strip v prefix")
 expect(UpdateCheck.normalize("1.3") == "1.3", "already bare")

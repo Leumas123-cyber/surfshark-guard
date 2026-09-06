@@ -52,6 +52,11 @@ struct Snapshot {
         guard let tunnel = tunnel else { return .noTunnel }
         return qbInterface == tunnel.iface ? .ok : .wrongBinding
     }
+
+    /// Short hover text for the menu-bar icon — no need to open the window.
+    var menuBarTooltip: String {
+        MenuBarTooltip.text(tunnel: tunnel?.iface, qbInterface: qbInterface)
+    }
 }
 
 @MainActor
@@ -110,6 +115,10 @@ final class GuardState: ObservableObject {
     @Published var updateAvailable: UpdateInfo?
     @Published var updateCheckMessage: String?
     @Published var loginTestResult: String?
+
+    var menuBarTooltip: String {
+        snapshot?.menuBarTooltip ?? MenuBarTooltip.unchecked
+    }
 
     private let defaults = UserDefaults.standard
     private var timer: Timer?

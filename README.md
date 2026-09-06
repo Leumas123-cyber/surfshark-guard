@@ -2,7 +2,7 @@
 
 Unofficial macOS menu-bar helper (Apple Silicon and Intel, macOS 13+) that keeps [qBittorrent](https://www.qbittorrent.org) bound to the current VPN tunnel ([Surfshark](https://surfshark.com), plus unofficial detection for Mullvad, Proton VPN, or any WireGuard).
 
-**Current version is 1.3.** Download from the [latest release](https://github.com/Leumas123-cyber/surfshark-guard/releases/latest) — pick **one** DMG:
+**Current version is 1.3.** People already download from the [latest GitHub Release](https://github.com/Leumas123-cyber/surfshark-guard/releases/latest) — pick **one** DMG. Official images are built by **GitHub Actions** on a version tag (`v1.3`), not uploaded from a personal Mac:
 
 | File | Who it is for |
 |---|---|
@@ -31,7 +31,8 @@ This app watches the tunnel and rewrites qBittorrent’s interface binding so yo
 
 ## What’s in 1.3
 
-- Two Release DMGs (arm64-only, and universal)
+- Two Release DMGs (arm64-only, and universal), built on GitHub Actions
+- Menu-bar hover text (`utun14 · sealed`) without opening the window
 - Pause torrents if the VPN tunnel drops (localhost Web UI)
 - Live binding from qBittorrent preferences, not only the ini file
 - Faster watch via `NWPathMonitor`, plus the 5 s timer
@@ -62,7 +63,7 @@ macOS 13 or newer. The app inside either image is still named **Surfshark Guard*
 ## Using it
 
 1. Connect the VPN as a **full tunnel**. Do not put qBittorrent in a split-tunnel / bypass list. Settings → Provider can stay **Auto**, or pick Surfshark / Mullvad / Proton VPN / Any WireGuard.
-2. Start Surfshark Guard. A shield appears in the menu bar. First launch opens a short setup checklist.
+2. Start Surfshark Guard. A shield appears in the menu bar. Hover it for a one-line status (`utun14 · sealed`) without opening the window. First launch opens a short setup checklist.
 3. Turn on **Watch**. Optionally **Auto-fix**, **Pause if down**, and **Alerts**. Settings can check GitHub Releases for a newer tag (download page only — nothing is installed automatically).
 4. For live rebinding while qBittorrent is running, enable qBittorrent’s Web UI on `127.0.0.1` and type those credentials under **Settings**. The password is stored in the **macOS Keychain** on your Mac (older UserDefaults copies are migrated once, then deleted). Requests only go to localhost. If the menu says **Web UI offline / check**, qBittorrent’s Web UI is not answering. The menu prefers the **live** Web UI binding over a stale `qBittorrent.ini`.
 
@@ -135,6 +136,8 @@ cd surfshark-guard
 ```
 
 That script builds **two apps**: an arm64-only bundle and a universal (`lipo`) bundle. It strips debug info, remaps source paths so the binaries should not contain the builder’s `/Users/…` path, ad-hoc signs both, and makes two DMGs.
+
+A version tag (`git tag v1.3 && git push origin v1.3`) runs the same script on GitHub’s `macos-14` runner and attaches both DMGs to that Release. You do not need to upload files from your laptop. The builds are still ad-hoc signed.
 
 Settings can **Check now** against `https://api.github.com/repos/Leumas123-cyber/surfshark-guard/releases/latest`. If a newer tag exists, the menu shows a download button. It does not download or install anything by itself.
 

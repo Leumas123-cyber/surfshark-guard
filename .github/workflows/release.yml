@@ -1,0 +1,57 @@
+name: Release DMGs
+
+# Official downloads are the two DMGs on the GitHub Release.
+# This job builds them on GitHub’s macOS runner (not a personal Mac).
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to attach the DMGs to (e.g. v1.3)"
+        required: true
+        type: string
+      checkout_ref:
+        description: "Git ref to build (empty = the tag itself)"
+        required: false
+        type: string
+
+jobs:
+  release:
+    name: Build and publish DMGs
+    runs-on: macos-14
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout_ref || inputs.release_tag || github.ref }}
+
+      - name: Show toolchain
+        run: swift --version && uname -m
+
+      - name: Build both apps
+        run: |
+          chmod +x scripts/make-app.sh scripts/publish-release.sh
+          ./scripts/make-app.sh
+
+      - name: Confirm DMGs
+        run: |
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' scripts/Info.plist)"
+          TAG="${{ inputs.release_tag || github.ref_name }}"
+          EXPECTED="${TAG#v}"
+          if [ "$VERSION" != "$EXPECTED" ]; then
+            echo "error: Info.plist version $VERSION does not match tag $TAG" >&2
+            exit 1
+          fi
+          ls -lh "build/SurfsharkGuard-${VERSION}-arm64.dmg" \
+                 "build/SurfsharkGuard-${VERSION}-universal.dmg"
+
+      - name: Publish to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.release_tag || github.ref_name }}"
+          ./scripts/publish-release.sh "$TAG"
