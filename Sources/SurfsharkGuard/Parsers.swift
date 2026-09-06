@@ -44,6 +44,7 @@ enum NetstatParser {
 
 struct IfInfo {
     var ipv4: String?
+    var globalIPv6: String?
     var mtu: String?
     var up: Bool
 }
@@ -57,12 +58,15 @@ enum IfconfigParser {
             let line = String(rawLine)
             if let name = interfaceName(of: line) {
                 current = name
-                result[name] = IfInfo(ipv4: nil, mtu: mtu(of: line), up: isUp(of: line))
+                result[name] = IfInfo(ipv4: nil, globalIPv6: nil, mtu: mtu(of: line), up: isUp(of: line))
                 continue
             }
             guard let cur = current, result[cur] != nil else { continue }
             if let ip = ipv4(of: line) {
                 result[cur]?.ipv4 = ip
+            }
+            if result[cur]?.globalIPv6 == nil, let ip6 = ipv6(of: line) {
+                result[cur]?.globalIPv6 = ip6
             }
         }
         return result
@@ -101,6 +105,23 @@ enum IfconfigParser {
         let parts = ip.split(separator: ".")
         guard parts.count == 4, parts.allSatisfy({ !$0.isEmpty }) else { return nil }
         return ip.hasPrefix("127.") ? nil : ip
+    }
+
+    /// Global IPv6 only — skip link-local, loopback, and unique-local.
+    private static func ipv6(of line: String) -> String? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("inet6 ") else { return nil }
+        var ip = trimmed.dropFirst("inet6 ".count)
+            .split(separator: " ").first.map(String.init) ?? ""
+        if let pct = ip.firstIndex(of: "%") {
+            ip = String(ip[..<pct])
+        }
+        let lower = ip.lowercased()
+        if lower.hasPrefix("fe80") || lower == "::1"
+            || lower.hasPrefix("fc") || lower.hasPrefix("fd") {
+            return nil
+        }
+        return ip.isEmpty ? nil : ip
     }
 }
 

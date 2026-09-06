@@ -18,5 +18,11 @@ struct SurfsharkGuardApp: App {
                 .environmentObject(state)
         }
         .windowResizability(.contentSize)
+
+        Window("Surfshark Guard — Setup", id: "sg-onboarding") {
+            OnboardingView()
+                .environmentObject(state)
+        }
+        .windowResizability(.contentSize)
     }
 }

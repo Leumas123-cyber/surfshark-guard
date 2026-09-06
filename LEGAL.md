@@ -7,7 +7,7 @@ This file is a plain-language note, not legal advice.
 Surfshark Guard is a small local macOS utility. It:
 
 - reads routing and interface information already available on your Mac
-- checks whether a Surfshark process is running
+- checks whether a matching VPN process is running (Surfshark, and unofficially Mullvad, Proton VPN, or WireGuard)
 - optionally writes qBittorrent’s local config, or talks to qBittorrent’s **localhost** Web UI, so BitTorrent uses the current VPN interface
 
 It does **not** include torrent files, trackers, copyrighted works, exploits, or a service that proxies or hosts anyone’s traffic.
@@ -18,7 +18,7 @@ The code is released under the MIT License (`LICENSE`). That is a well-known ope
 
 ## What I am not doing
 
-- I am not affiliated with, endorsed by, or speaking for Surfshark, qBittorrent, Apple, or any VPN or BitTorrent vendor.
+- I am not affiliated with, endorsed by, or speaking for Surfshark, Mullvad, Proton, qBittorrent, Apple, or any VPN or BitTorrent vendor.
 - I am not providing a piracy tool, a “get torrents illegally” guide, or a way to avoid copyright law.
 - I am not promising the app will keep you anonymous or safe.
 
@@ -26,7 +26,7 @@ Using BitTorrent is legal for content you have the right to share. Using it for 
 
 ## Trademarks
 
-“Surfshark” and “qBittorrent” are trademarks of their respective owners. They appear here only to describe compatibility. This project must not be presented as an official Surfshark or qBittorrent download.
+“Surfshark”, “Mullvad”, “Proton”, and “qBittorrent” are trademarks of their respective owners. They appear here only to describe compatibility. This project must not be presented as an official download of any of those products.
 
 ## Author note
 

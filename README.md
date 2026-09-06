@@ -1,6 +1,6 @@
 # Surfshark Guard
 
-Unofficial macOS menu-bar helper (Apple Silicon, macOS 13+) that keeps [qBittorrent](https://www.qbittorrent.org) bound to the current [Surfshark](https://surfshark.com) VPN interface.
+Unofficial macOS menu-bar helper (Apple Silicon, macOS 13+) that keeps [qBittorrent](https://www.qbittorrent.org) bound to the current VPN tunnel ([Surfshark](https://surfshark.com), plus unofficial detection for Mullvad, Proton VPN, or any WireGuard).
 
 **Download:** [latest DMG](https://github.com/Leumas123-cyber/surfshark-guard/releases/latest)
 
@@ -10,7 +10,7 @@ This is **not** a Surfshark or qBittorrent product. It is a hobby upload. I vibe
 
 I only uploaded this so other people don’t have to repeat the same annoying manual check every time they want BitTorrent traffic to stay on a VPN tunnel.
 
-Surfshark creates a new `utun` interface on almost every reconnect. qBittorrent’s *Settings → Advanced → Network interface* is a **fixed** choice. After a reconnect that old interface is gone, so transfers stall — or worse, they can fall back to Wi‑Fi/Ethernet and leak your real IP.
+Many WireGuard VPNs (Surfshark included) create a new `utun` interface on almost every reconnect. qBittorrent’s *Settings → Advanced → Network interface* is a **fixed** choice. After a reconnect that old interface is gone, so transfers stall — or worse, they can fall back to Wi‑Fi/Ethernet and leak your real IP.
 
 This app watches the tunnel and rewrites qBittorrent’s interface binding so you don’t have to poke `ifconfig` / `netstat` / the qBittorrent settings by hand each time.
 
@@ -38,10 +38,10 @@ Needs an Apple Silicon Mac. Intel Macs are not supported.
 
 ## Using it
 
-1. Connect Surfshark as a **full tunnel**. Do not put qBittorrent in Surfshark Bypasser / split tunneling.
-2. Start Surfshark Guard. A shield appears in the menu bar.
-3. Turn on **Watch**. Optionally **Auto-fix** and **Alerts**.
-4. For live rebinding while qBittorrent is running, enable qBittorrent’s Web UI on `127.0.0.1` and type those credentials under **Settings**. The password is stored in the **macOS Keychain** on your Mac (older UserDefaults copies are migrated once, then deleted). Requests only go to localhost. If the menu says **Web UI offline / check**, qBittorrent’s Web UI is not answering.
+1. Connect the VPN as a **full tunnel**. Do not put qBittorrent in a split-tunnel / bypass list. Settings → Provider can stay **Auto**, or pick Surfshark / Mullvad / Proton VPN / Any WireGuard.
+2. Start Surfshark Guard. A shield appears in the menu bar. First launch opens a short setup checklist.
+3. Turn on **Watch**. Optionally **Auto-fix**, **Pause if down**, and **Alerts**.
+4. For live rebinding while qBittorrent is running, enable qBittorrent’s Web UI on `127.0.0.1` and type those credentials under **Settings**. The password is stored in the **macOS Keychain** on your Mac (older UserDefaults copies are migrated once, then deleted). Requests only go to localhost. If the menu says **Web UI offline / check**, qBittorrent’s Web UI is not answering. The menu prefers the **live** Web UI binding over a stale `qBittorrent.ini`.
 
 **Quit qB & bind** quits qBittorrent normally (not force-killed) and writes the tunnel name into `qBittorrent.ini`.
 
@@ -49,7 +49,7 @@ Needs an Apple Silicon Mac. Intel Macs are not supported.
 |---|---|
 | Green shield | qBittorrent is bound to the tunnel |
 | Red shield | Wrong or missing binding — leak risk |
-| Orange slash | No Surfshark tunnel right now |
+| Orange slash | No VPN tunnel right now |
 
 ## How the project works
 
@@ -60,13 +60,15 @@ This is the part I *can* describe from the source. If I got a detail wrong, read
 | File | Job |
 |---|---|
 | `SurfsharkGuardApp.swift` | Menu-bar SwiftUI app (`LSUIElement`, no Dock icon) plus a settings window |
-| `Detector.swift` | Asks macOS which VPN interface is the Surfshark tunnel |
+| `Detector.swift` | Asks macOS which VPN interface is the current tunnel |
+| `VPNProvider.swift` | Process matching for Auto / Surfshark / Mullvad / Proton / WireGuard |
 | `Parsers.swift` | Parses `route` / `netstat` / `ifconfig` text and edits `qBittorrent.ini` |
 | `QBittorrent.swift` | Finds the newest qBittorrent config on **this** user account and writes a backup + new binding |
-| `WebUI.swift` | Optional localhost login plus a cheap reachability probe |
+| `WebUI.swift` | Optional localhost login, live prefs, pause-all, plus a cheap reachability probe |
 | `Keychain.swift` | Web UI password in the macOS Keychain (migrates leftover UserDefaults) |
-| `GuardState.swift` | Timer (5 s default, with tolerance), notifications, auto-fix, login-item toggle |
+| `GuardState.swift` | Timer (5 s default, with tolerance), `NWPathMonitor`, pause-on-drop, notifications, auto-fix, login-item toggle |
 | `Views.swift` | Menu and settings UI |
+| `OnboardingView.swift` | First-run checklist (VPN, tunnel, localhost Web UI, login test) |
 
 There are no servers of mine, no analytics, and no account. The app only talks to your Mac and, if you enable it, `http://127.0.0.1` on qBittorrent.
 
@@ -77,8 +79,10 @@ Every check runs roughly this, in order:
 1. `ifconfig -a` — keep `utun*` / `ipsec*` / `ppp*` interfaces that have a real IPv4 (not `127.*`). iCloud’s extra utuns usually have no IPv4, so they are ignored.
 2. `route -n get default` — if the default route sits on one of those VPN interfaces, that is the tunnel.
 3. Else `netstat -rn -f inet` — look for WireGuard-style full-tunnel routes `0/1` and `128.0/1` on a VPN interface.
-4. Else, if a Surfshark process is running and there is **exactly one** VPN interface with IPv4, use that.
-5. `pgrep -ifl surfshark` — warn if Surfshark itself is not running (the tunnel might belong to another VPN).
+4. Else, if a matching VPN process is running and there is **exactly one** VPN interface with IPv4, use that.
+5. `pgrep` against the selected provider — warn if that VPN app is not running (the tunnel might belong to something else).
+
+If a tunnel is up but an `en*` interface still has a **global IPv6**, the menu shows a leak hint. The app does not disable IPv6 for you.
 
 ### How it rebinds qBittorrent
 
@@ -92,10 +96,11 @@ The app looks for the newest of:
 
 Paths use **your** home directory at runtime. Nothing from my Mac is hardcoded.
 
-- **Web UI on:** `POST /api/v2/auth/login` then `POST /api/v2/app/setPreferences` with the new interface name. Takes effect immediately.
+- **Web UI on:** `POST /api/v2/auth/login`, then read `GET /api/v2/app/preferences` for the live NIC, and `POST /api/v2/app/setPreferences` to rebind. Takes effect immediately.
 - **Web UI off:** write the ini (with a `.bak-…` next to it). qBittorrent must be quit first or it will overwrite the file when it exits. Auto-fix will **not** force-quit qBittorrent.
+- **Pause if down:** when the status flips from “has a tunnel” to “no tunnel”, the Web UI is asked to pause/stop all torrents (`/torrents/stop`, then `/torrents/pause` for older qB).
 
-**Watch** repeats `route` / `ifconfig` on a timer (default 5 seconds, never a tight loop). The timer has macOS coalescing tolerance and stretches in Low Power Mode. **Auto-fix** tries the Web UI, or the ini write once qBittorrent is already quit.
+**Watch** repeats `route` / `ifconfig` on a timer (default 5 seconds, never a tight loop) and also after `NWPathMonitor` path changes (debounced ~0.4 s). The timer has macOS coalescing tolerance and stretches in Low Power Mode. **Auto-fix** tries the Web UI, or the ini write once qBittorrent is already quit.
 
 ### Build (if you don’t trust the DMG)
 
@@ -113,7 +118,7 @@ Fix it yourself. This is vibe-coded. I am not offering support, refunds, or a gu
 
 Ideas if you want to poke at it:
 
-- Confirm Surfshark is connected and qBittorrent is **not** in Bypasser.
+- Confirm the VPN is connected as a full tunnel and qBittorrent is **not** in a bypass / split-tunnel list.
 - Click **Check now** and read the status text.
 - Enable the Web UI on localhost if you want live fixes.
 - Read `Detector.swift` and `GuardState.swift`.

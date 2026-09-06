@@ -28,8 +28,11 @@ utun9: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380
 en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
 	ether aa:bb:cc:dd:ee:ff
 	inet 192.168.1.42 netmask 0xffffff00 broadcast 192.168.1.255
+	inet6 fe80::1%en0 prefixlen 64 scopeid 0x4
+	inet6 2001:db8::5 prefixlen 64
 lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
 	inet 127.0.0.1 netmask 0xff000000
+	inet6 ::1 prefixlen 128
 """
 
 let fixtureIni = """
@@ -73,6 +76,18 @@ final class ParsersTests: XCTestCase {
         XCTAssertEqual(ifaces["en0"]?.ipv4, "192.168.1.42")
         XCTAssertTrue(ifaces["utun9"]?.up ?? false)
         XCTAssertNil(ifaces["lo0"]?.ipv4)
+        XCTAssertEqual(ifaces["en0"]?.globalIPv6, "2001:db8::5")
+        XCTAssertNil(ifaces["lo0"]?.globalIPv6)
+        XCTAssertTrue(Detector.ipv6Hint(ifconfigText: fixtureIfconfig, tunnel: "utun9")?.contains("en0") == true)
+        XCTAssertNil(Detector.ipv6Hint(ifconfigText: fixtureIfconfig, tunnel: nil))
+    }
+
+    func testVPNProviderMatching() {
+        XCTAssertTrue(VPNProvider.surfshark.matches("123 /Applications/Surfshark.app"))
+        XCTAssertFalse(VPNProvider.surfshark.matches("123 SurfsharkGuard"))
+        XCTAssertTrue(VPNProvider.mullvad.matches("88 /Applications/Mullvad VPN.app"))
+        XCTAssertTrue(VPNProvider.proton.matches("9 ProtonVPN"))
+        XCTAssertTrue(VPNProvider.auto.matches("wireguard-go"))
     }
 
     func testIniBindingRead() {

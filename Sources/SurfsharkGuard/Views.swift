@@ -8,8 +8,21 @@ struct GuardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             header
+            if !state.onboardingDone {
+                Button {
+                    openSettingsOrOnboarding("sg-onboarding")
+                } label: {
+                    Label("Finish setup…", systemImage: "list.bullet.clipboard")
+                }
+                .buttonStyle(.bordered)
+            }
             Divider()
             detailRows
+            if let hint = state.snapshot?.ipv6Hint {
+                Label(hint, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
             if let tunnel = state.snapshot?.tunnel {
                 evidence(tunnel)
             }
@@ -20,7 +33,12 @@ struct GuardView: View {
         }
         .padding(12)
         .frame(width: 400)
-        .onAppear { state.start() }
+        .onAppear {
+            state.start()
+            if !state.onboardingDone {
+                openSettingsOrOnboarding("sg-onboarding")
+            }
+        }
     }
 
     private var header: some View {
@@ -68,11 +86,12 @@ struct GuardView: View {
 
     private var tunnelText: String {
         guard let t = state.snapshot?.tunnel else {
-            return "none — connect Surfshark!"
+            return "none — connect the VPN!"
         }
         var text = "\(t.iface)"
         if let ip = t.ip { text += " · \(ip)" }
-        text += t.wireGuard ? " · WireGuard" : ""
+        if let name = t.vpnName { text += " · \(name)" }
+        else if t.wireGuard { text += " · WireGuard" }
         return text
     }
 
@@ -99,6 +118,7 @@ struct GuardView: View {
         if let s = snap {
             var t = s.qbInterface ?? "NONE (“Any interface”)"
             if let addr = s.qbAddress { t += " · IP \(addr)" }
+            if let src = s.bindingSource { t += " · \(src)" }
             if s.status == .wrongBinding {
                 t += "  ←  tunnel is \(s.tunnel?.iface ?? "?")"
             }
@@ -150,6 +170,7 @@ struct GuardView: View {
         HStack(spacing: 14) {
             Toggle("Watch", isOn: $state.autoWatch)
             Toggle("Auto-fix", isOn: $state.autoFix)
+            Toggle("Pause if down", isOn: $state.pauseOnDrop)
             Toggle("Alerts", isOn: $state.notifications)
         }
         .toggleStyle(.checkbox)
@@ -170,15 +191,7 @@ struct GuardView: View {
             }
             .disabled(state.snapshot?.status == .ok)
             Button {
-                openWindow(id: "sg-settings")
-                NSApp.activate(ignoringOtherApps: true)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    for window in NSApp.windows
-                    where window.identifier?.rawValue.contains("sg-settings") == true {
-                        window.makeKeyAndOrderFront(nil)
-                        window.orderFrontRegardless()
-                    }
-                }
+                openSettingsOrOnboarding("sg-settings")
             } label: {
                 Label("Settings", systemImage: "gear")
             }
@@ -209,6 +222,18 @@ struct GuardView: View {
         .frame(maxWidth: .infinity, minHeight: 16, alignment: .leading)
     }
 
+    private func openSettingsOrOnboarding(_ id: String) {
+        openWindow(id: id)
+        NSApp.activate(ignoringOtherApps: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            for window in NSApp.windows
+            where window.identifier?.rawValue.contains(id) == true {
+                window.makeKeyAndOrderFront(nil)
+                window.orderFrontRegardless()
+            }
+        }
+    }
+
     private func abbreviated(_ path: String) -> String {
         let home = NSHomeDirectory()
         return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
@@ -217,13 +242,29 @@ struct GuardView: View {
 
 struct SettingsView: View {
     @EnvironmentObject private var state: GuardState
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Form {
+            Section("VPN") {
+                Picker("Provider", selection: $state.vpnProvider) {
+                    ForEach(VPNProvider.allCases) { provider in
+                        Text(provider.title).tag(provider)
+                    }
+                }
+                Text("Auto picks Surfshark, Mullvad, Proton VPN, or a WireGuard tunnel. Unofficial — not affiliated with any of them.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             Section("Watching") {
                 Toggle("Open at login", isOn: Binding(
                     get: { state.loginItemEnabled },
                     set: { state.setLoginItem($0) }))
+                Button("Open setup checklist") {
+                    state.onboardingDone = false
+                    openWindow(id: "sg-onboarding")
+                    NSApp.activate(ignoringOtherApps: true)
+                }
                 Picker("Interval", selection: $state.watchInterval) {
                     Text("5 s").tag(5.0)
                     Text("10 s").tag(10.0)
@@ -231,13 +272,14 @@ struct SettingsView: View {
                     Text("30 s").tag(30.0)
                 }
                 .pickerStyle(.segmented)
-                Text("Watch runs route/ifconfig on a timer (default 5 s, never a tight loop). Low Power Mode and heat stretch the gap. Problems show as a macOS notification.")
+                Text("Watch runs route/ifconfig on a timer and also when the network path changes. Default 5 s, never a tight loop.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
             Section("Automatic fix") {
                 Toggle("Fix binding automatically", isOn: $state.autoFix)
-                Text("Live via the Web UI below, otherwise in the config file once qBittorrent has quit — it is never force-quit.")
+                Toggle("Pause torrents if the VPN drops", isOn: $state.pauseOnDrop)
+                Text("Live via the Web UI below, otherwise in the config file once qBittorrent has quit — it is never force-quit. Pause uses the Web UI (qB 4 pause / qB 5 stop).")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -254,6 +296,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 460, height: 420)
+        .frame(width: 480, height: 620)
     }
 }

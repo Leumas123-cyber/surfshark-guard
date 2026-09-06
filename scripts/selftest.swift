@@ -46,8 +46,11 @@ utun9: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380
 en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
 	ether aa:bb:cc:dd:ee:ff
 	inet 192.168.1.42 netmask 0xffffff00 broadcast 192.168.1.255
+	inet6 fe80::1%en0 prefixlen 64 scopeid 0x4
+	inet6 2001:db8::5 prefixlen 64
 lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
 	inet 127.0.0.1 netmask 0xff000000
+	inet6 ::1 prefixlen 128
 """
 
 let fixtureIni = """
@@ -71,6 +74,10 @@ expect(NetstatParser.tunnelCandidates(from: fixtureNetstat) == ["utun3"], "netst
 let ifaces = IfconfigParser.parse(fixtureIfconfig)
 expect(ifaces["utun9"]?.ipv4 == "10.14.0.2" && ifaces["utun9"]?.mtu == "1380", "ifconfig utun9")
 expect(ifaces["lo0"]?.ipv4 == nil, "ignore 127.0.0.1")
+expect(ifaces["en0"]?.globalIPv6 == "2001:db8::5", "global ipv6")
+expect(ifaces["lo0"]?.globalIPv6 == nil, "ignore ::1")
+expect(Detector.ipv6Hint(ifconfigText: fixtureIfconfig, tunnel: "utun9")?.contains("en0") == true, "ipv6 leak hint")
+expect(Detector.ipv6Hint(ifconfigText: fixtureIfconfig, tunnel: nil) == nil, "no ipv6 hint without tunnel")
 expect(IfconfigParser.parse("").isEmpty, "empty ifconfig")
 
 let (iface, addr) = IniEditor.binding(in: "[BitTorrent]\nSession\\Interface=utun7\nSession\\InterfaceName=utun7\n")
@@ -132,16 +139,19 @@ if let def = RouteParser.defaultInterface(from: routeOut) {
     print("  info default iface: \(def)")
     expect(!def.isEmpty, "default iface name")
 }
-let tunnel = Detector.detect()
+let tunnel = Detector.detect(provider: .auto)
 if let tunnel {
-    print("  info tunnel: \(tunnel.iface) ip=\(tunnel.ip ?? "-") wg=\(tunnel.wireGuard) ss=\(tunnel.surfsharkRunning)")
+    print("  info tunnel: \(tunnel.iface) ip=\(tunnel.ip ?? "-") wg=\(tunnel.wireGuard) vpn=\(tunnel.vpnName ?? "-")")
     expect(isVPNInterface(tunnel.iface), "detected iface is vpn")
 } else {
-    print("  info no tunnel right now (ok if Surfshark is down)")
+    print("  info no tunnel right now (ok if VPN is down)")
 }
 print("  info qbittorrent running: \(Detector.qbittorrentRunning())")
-let ssProcs = Detector.surfsharkProcesses()
-print("  info surfshark procs: \(ssProcs.count) \(ssProcs)")
+let ssProcs = Detector.vpnProcesses(for: .auto)
+print("  info vpn procs: \(ssProcs.count) \(ssProcs)")
+expect(VPNProvider.surfshark.matches("123 /Applications/Surfshark.app"), "surfshark match")
+expect(!VPNProvider.surfshark.matches("123 SurfsharkGuard"), "ignore our process")
+expect(VPNProvider.mullvad.matches("88 /Applications/Mullvad VPN.app"), "mullvad match")
 
 print("== live webui probe ==")
 let box = ProbeBox()

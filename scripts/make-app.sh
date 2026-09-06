@@ -30,6 +30,7 @@ swiftc -parse-as-library -O -target arm64-apple-macos13 \
   Sources/SurfsharkGuard/QBittorrent.swift \
   Sources/SurfsharkGuard/WebUI.swift \
   Sources/SurfsharkGuard/Keychain.swift \
+  Sources/SurfsharkGuard/VPNProvider.swift \
   scripts/selftest.swift
 ./.build/selftest
 
@@ -61,6 +62,9 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_SRC" "$BIN_OUT"
 cp scripts/Info.plist "$APP/Contents/Info.plist"
+if [ -f "Assets/AppIcon.icns" ]; then
+  cp Assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+fi
 
 # Drop leftover symbol / path tables that Swift may still emit.
 strip -xS "$BIN_OUT"
@@ -82,7 +86,7 @@ touch "$APP"
 
 echo "▸ Creating DMG…"
 STAGE="build/dmg-root"
-DMG="build/SurfsharkGuard-1.2-arm64.dmg"
+DMG="build/SurfsharkGuard-1.3-arm64.dmg"
 rm -rf "$STAGE" "$DMG"
 mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/SurfsharkGuard.app"

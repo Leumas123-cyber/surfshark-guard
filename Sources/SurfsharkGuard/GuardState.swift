@@ -3,6 +3,7 @@ import SwiftUI
 import UserNotifications
 import AppKit
 import ServiceManagement
+import Network
 
 enum GuardStatus {
     case ok
@@ -29,7 +30,7 @@ enum GuardStatus {
         switch self {
         case .ok: return "All sealed — qBittorrent is on the tunnel"
         case .wrongBinding: return "Wrong binding — leak risk"
-        case .noTunnel: return "No Surfshark tunnel"
+        case .noTunnel: return "No VPN tunnel"
         }
     }
 }
@@ -42,6 +43,9 @@ struct Snapshot {
     var configPath: String?
     var writeTarget: String
     var webUI: WebUIReachability
+    var bindingSource: String?
+    var ipv6Hint: String?
+    var lastPaused: Bool
     var checkedAt: Date
 
     var status: GuardStatus {
@@ -61,7 +65,7 @@ final class GuardState: ObservableObject {
     private var lastNotifiedStatus: GuardStatus?
 
     @Published var autoWatch: Bool {
-        didSet { defaults.set(autoWatch, forKey: "autoWatch"); rescheduleTimer() }
+        didSet { defaults.set(autoWatch, forKey: "autoWatch"); rescheduleTimer(); startPathMonitor() }
     }
     @Published var autoFix: Bool {
         didSet { defaults.set(autoFix, forKey: "autoFix") }
@@ -91,11 +95,23 @@ final class GuardState: ObservableObject {
             }
         }
     }
+    @Published var vpnProvider: VPNProvider {
+        didSet { defaults.set(vpnProvider.rawValue, forKey: "vpnProvider") }
+    }
+    @Published var pauseOnDrop: Bool {
+        didSet { defaults.set(pauseOnDrop, forKey: "pauseOnDrop") }
+    }
+    @Published var onboardingDone: Bool {
+        didSet { defaults.set(onboardingDone, forKey: "onboardingDone") }
+    }
+    @Published var loginTestResult: String?
 
     private let defaults = UserDefaults.standard
     private var timer: Timer?
     private var qBQuitObserver: Any?
     private var powerObserver: Any?
+    private var pathMonitor: NWPathMonitor?
+    private var pathDebounce: DispatchWorkItem?
     private var isHydrating = true
 
     private init() {
@@ -107,6 +123,9 @@ final class GuardState: ObservableObject {
         webuiURL = defaults.string(forKey: "webuiURL") ?? "http://127.0.0.1:8080"
         webuiUser = defaults.string(forKey: "webuiUser") ?? ""
         webuiPass = KeychainStore.migrateFromUserDefaults(defaults)
+        vpnProvider = VPNProvider(rawValue: defaults.string(forKey: "vpnProvider") ?? "") ?? .auto
+        pauseOnDrop = defaults.object(forKey: "pauseOnDrop") as? Bool ?? true
+        onboardingDone = defaults.bool(forKey: "onboardingDone")
         isHydrating = false
 
         qBQuitObserver = NotificationCenter.default.addObserver(
@@ -133,11 +152,13 @@ final class GuardState: ObservableObject {
 
         Task { await checkNow() }
         rescheduleTimer()
+        startPathMonitor()
     }
 
     func start() {
         Task { await checkNow() }
         rescheduleTimer()
+        startPathMonitor()
         if notifications { askNotificationPermission() }
     }
 
@@ -150,6 +171,13 @@ final class GuardState: ObservableObject {
         let previous = snapshot?.status
         snapshot = snap
 
+        if previous != nil, previous != .noTunnel, snap.status == .noTunnel {
+            await pauseTorrentsIfNeeded()
+        }
+        if autoFix, snap.status == .wrongBinding {
+            await attemptFix(automatic: true)
+        }
+
         if notifyAbout, previous != nil, previous != snap.status,
            notifications, snap.status != .ok {
             notifyProblem(snap)
@@ -159,20 +187,33 @@ final class GuardState: ObservableObject {
 
     private func gather() async -> Snapshot {
         let probeURL = webuiEnabled ? URL(string: webuiURL) : nil
+        let enabled = webuiEnabled
+        let user = webuiUser
+        let pass = webuiPass
+        let provider = vpnProvider
         return await Task.detached(priority: .utility) {
-            let tunnel = Detector.detect()
+            let ifconfigText = Shell.run("/sbin/ifconfig", ["-a"])
+            let tunnel = Detector.detect(provider: provider)
             let (existing, target) = QBittorrent.findConfig()
             var iface: String?
             var addr: String?
+            var source: String? = nil
             if let path = existing, let text = try? String(contentsOfFile: path,
                                                             encoding: .utf8) {
                 (iface, addr) = IniEditor.binding(in: text)
+                if iface != nil { source = "ini" }
             }
-            let webUI: WebUIReachability
-            if let probeURL {
+            var webUI: WebUIReachability = .unused
+            if enabled, let probeURL {
                 webUI = await QBWebUI.probe(baseURL: probeURL)
-            } else {
-                webUI = .unused
+                if webUI == .online, !user.isEmpty {
+                    let ui = QBWebUI(baseURL: probeURL, user: user, password: pass)
+                    if await ui.login(), let live = await ui.currentBinding() {
+                        iface = live.iface
+                        addr = live.addr ?? addr
+                        source = "web UI"
+                    }
+                }
             }
             return Snapshot(
                 tunnel: tunnel,
@@ -182,6 +223,9 @@ final class GuardState: ObservableObject {
                 configPath: existing,
                 writeTarget: target,
                 webUI: webUI,
+                bindingSource: source,
+                ipv6Hint: Detector.ipv6Hint(ifconfigText: ifconfigText, tunnel: tunnel?.iface),
+                lastPaused: false,
                 checkedAt: Date()
             )
         }.value
@@ -190,7 +234,7 @@ final class GuardState: ObservableObject {
     func attemptFix(automatic: Bool) async {
         guard let snap = snapshot else { return }
         guard let tunnel = snap.tunnel else {
-            lastError = "No tunnel — connect Surfshark first."
+            lastError = "No tunnel — connect the VPN first."
             return
         }
 
@@ -295,13 +339,61 @@ final class GuardState: ObservableObject {
             [weak self] _ in
             Task { @MainActor in
                 await self?.checkNow()
-                if self?.autoFix == true, self?.snapshot?.status == .wrongBinding {
-                    await self?.attemptFix(automatic: true)
-                }
             }
         }
         scheduled.tolerance = min(2, interval * 0.3)
         timer = scheduled
+    }
+
+    private func startPathMonitor() {
+        pathMonitor?.cancel()
+        guard autoWatch else {
+            pathMonitor = nil
+            return
+        }
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.pathDebounce?.cancel()
+                let work = DispatchWorkItem {
+                    Task { @MainActor in
+                        await self.checkNow()
+                    }
+                }
+                self.pathDebounce = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+            }
+        }
+        monitor.start(queue: DispatchQueue.global(qos: .utility))
+        pathMonitor = monitor
+    }
+
+    func testWebUILogin() async {
+        loginTestResult = nil
+        guard let url = URL(string: webuiURL) else {
+            loginTestResult = "Invalid URL"
+            return
+        }
+        let ui = QBWebUI(baseURL: url, user: webuiUser, password: webuiPass)
+        if await ui.login() {
+            loginTestResult = "Login works"
+        } else {
+            loginTestResult = "Login failed — check user / password / Web UI"
+        }
+    }
+
+    private func pauseTorrentsIfNeeded() async {
+        guard pauseOnDrop, webuiEnabled, !webuiUser.isEmpty,
+              let url = URL(string: webuiURL) else { return }
+        let ui = QBWebUI(baseURL: url, user: webuiUser, password: webuiPass)
+        guard await ui.login() else { return }
+        if await ui.pauseAllTorrents() {
+            lastAction = "VPN dropped — paused all torrents"
+            if var snap = snapshot { snap.lastPaused = true; snapshot = snap }
+            postNotification("Surfshark Guard — torrents paused",
+                             "The VPN tunnel went down, so qBittorrent was paused.")
+        }
     }
 
     private func askNotificationPermission() {
@@ -317,7 +409,7 @@ final class GuardState: ObservableObject {
         case .wrongBinding:
             text = "qBittorrent is on \(snap.qbInterface ?? "no interface"), the tunnel is \(snap.tunnel?.iface ?? "?")"
         case .noTunnel:
-            text = "No Surfshark tunnel — don’t start torrents now."
+            text = "No VPN tunnel — torrents should stay paused."
         case .ok:
             return
         }

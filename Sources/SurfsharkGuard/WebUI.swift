@@ -30,7 +30,7 @@ struct QBWebUI {
         return baseURL.appending(path: trimmed)
     }
 
-    private func post(_ path: String, form: [String: String]) async throws -> String {
+    private func post(_ path: String, form: [String: String]) async throws -> (body: String, code: Int) {
         var components = URLComponents()
         components.queryItems = form.map {
             URLQueryItem(name: $0.key, value: $0.value)
@@ -42,8 +42,9 @@ struct QBWebUI {
         request.setValue("application/x-www-form-urlencoded",
                          forHTTPHeaderField: "Content-Type")
         request.setValue(baseURL.absoluteString, forHTTPHeaderField: "Referer")
-        let (data, _) = try await URLSession.shared.data(for: request)
-        return String(data: data, encoding: .utf8) ?? ""
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        return (String(data: data, encoding: .utf8) ?? "", code)
     }
 
     private static let probeSession: URLSession = {
@@ -70,9 +71,45 @@ struct QBWebUI {
 
     func login() async -> Bool {
         guard !user.isEmpty else { return false }
-        let body = try? await post("/api/v2/auth/login",
-                                   form: ["username": user, "password": password])
-        return body?.contains("Ok") == true
+        let result = try? await post("/api/v2/auth/login",
+                                     form: ["username": user, "password": password])
+        return result?.body.contains("Ok") == true
+    }
+
+    /// Live NIC from a running qBittorrent (ini can be stale).
+    func currentBinding() async -> (iface: String?, addr: String?)? {
+        var request = URLRequest(url: Self.endpoint("/api/v2/app/preferences", on: baseURL))
+        request.httpMethod = "GET"
+        request.timeoutInterval = 2
+        request.setValue(baseURL.absoluteString, forHTTPHeaderField: "Referer")
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard (200...299).contains(code),
+                  let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return nil }
+            func nonEmpty(_ key: String) -> String? {
+                guard let raw = json[key] as? String else { return nil }
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            let iface = nonEmpty("current_interface_name")
+                ?? nonEmpty("current_network_interface")
+            return (iface, nonEmpty("current_interface_address"))
+        } catch {
+            return nil
+        }
+    }
+
+    /// qB 4.x uses pause; qB 5.x uses stop.
+    func pauseAllTorrents() async -> Bool {
+        for path in ["/api/v2/torrents/stop", "/api/v2/torrents/pause"] {
+            if let result = try? await post(path, form: ["hashes": "all"]),
+               (200...299).contains(result.code) {
+                return true
+            }
+        }
+        return false
     }
 
     /// `current_network_interface` is the older qBittorrent key; unknown

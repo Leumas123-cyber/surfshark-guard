@@ -5,9 +5,9 @@ struct TunnelInfo {
     var ip: String?
     var mtu: String?
     var wireGuard: Bool
-    var surfsharkRunning: Bool
+    var vpnRunning: Bool
+    var vpnName: String?
     var why: [String]
-    /// Other VPN interfaces that have IPv4 (display only).
     var otherCandidates: [String]
 }
 
@@ -36,26 +36,21 @@ enum Shell {
 }
 
 enum Detector {
-    /// Live process list — must be re-read on every check, not cached.
-    static func surfsharkProcesses() -> [String] {
-        let out = Shell.run("/usr/bin/pgrep", ["-ifl", "surfshark"])
+    static func vpnProcesses(for provider: VPNProvider) -> [String] {
+        let out = Shell.run("/usr/bin/pgrep", ["-ifl", provider.pgrepPattern])
         return out.split(separator: "\n")
             .map(String.init)
-            .filter { line in
-                let lower = line.lowercased()
-                return !lower.contains("surfshark-guard") && !lower.contains("surfsharkguard")
-            }
+            .filter { provider.matches($0) }
     }
 
-    /// Pick the Surfshark tunnel interface. Order: default route, then
-    /// WireGuard full-tunnel routes 0/1 + 128.0/1, then (if Surfshark is
-    /// running and exactly one VPN interface has IPv4) that interface.
-    static func detect() -> TunnelInfo? {
+    static func detect(provider: VPNProvider = .auto) -> TunnelInfo? {
         let ifaces = IfconfigParser.parse(
             Shell.run("/sbin/ifconfig", ["-a"]))
-        let procs = surfsharkProcesses()
+        let procs = vpnProcesses(for: provider)
         let running = !procs.isEmpty
+        let vpnName = provider.label(in: procs)
         let wgHint = procs.contains { $0.lowercased().contains("wireguard") }
+            || provider == .wireguard
 
         let vpnIfaces = ifaces.filter { isVPNInterface($0.key) && $0.value.ipv4 != nil }
         let defaultIface = RouteParser.defaultInterface(
@@ -79,24 +74,44 @@ enum Detector {
 
         if chosen == nil, running, vpnIfaces.count == 1 {
             chosen = vpnIfaces.keys.first
-            why.append("only VPN interface with IPv4 (Surfshark is running)")
+            why.append("only VPN interface with IPv4 (\(vpnName ?? provider.title) is running)")
         }
 
         guard let iface = chosen else { return nil }
 
-        why.append(running ? "Surfshark process is running"
-                           : "WARNING: no Surfshark process found")
-        if wgHint { why.append("WireGuard system extension is active") }
+        if running {
+            why.append("\(vpnName ?? "VPN") process is running")
+        } else if provider == .wireguard || provider == .auto {
+            why.append("WARNING: no matching VPN process found")
+        } else {
+            why.append("WARNING: no \(provider.title) process found")
+        }
+        if wgHint { why.append("WireGuard-style tunnel or extension") }
 
         return TunnelInfo(
             iface: iface,
             ip: vpnIfaces[iface]?.ipv4,
             mtu: vpnIfaces[iface]?.mtu,
             wireGuard: wgHint,
-            surfsharkRunning: running,
+            vpnRunning: running,
+            vpnName: vpnName,
             why: why,
             otherCandidates: vpnIfaces.keys.filter { $0 != iface }.sorted()
         )
+    }
+
+    /// Global IPv6 still on Wi‑Fi/Ethernet while a VPN tunnel is up.
+    static func ipv6Hint(ifconfigText: String = Shell.run("/sbin/ifconfig", ["-a"]),
+                         tunnel: String?) -> String? {
+        guard tunnel != nil else { return nil }
+        let ifaces = IfconfigParser.parse(ifconfigText)
+        let leaks = ifaces
+            .filter { name, info in
+                !isVPNInterface(name) && name.hasPrefix("en") && info.globalIPv6 != nil
+            }
+            .sorted { $0.key < $1.key }
+        guard let first = leaks.first, let ip = first.value.globalIPv6 else { return nil }
+        return "\(first.key) still has IPv6 \(ip) — possible leak"
     }
 
     static func qbittorrentRunning() -> Bool {
