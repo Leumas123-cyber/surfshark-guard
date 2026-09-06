@@ -104,6 +104,11 @@ final class GuardState: ObservableObject {
     @Published var onboardingDone: Bool {
         didSet { defaults.set(onboardingDone, forKey: "onboardingDone") }
     }
+    @Published var checkUpdates: Bool {
+        didSet { defaults.set(checkUpdates, forKey: "checkUpdates") }
+    }
+    @Published var updateAvailable: UpdateInfo?
+    @Published var updateCheckMessage: String?
     @Published var loginTestResult: String?
 
     private let defaults = UserDefaults.standard
@@ -113,6 +118,7 @@ final class GuardState: ObservableObject {
     private var pathMonitor: NWPathMonitor?
     private var pathDebounce: DispatchWorkItem?
     private var isHydrating = true
+    private var didCheckUpdate = false
 
     private init() {
         autoWatch = defaults.object(forKey: "autoWatch") as? Bool ?? true
@@ -126,6 +132,7 @@ final class GuardState: ObservableObject {
         vpnProvider = VPNProvider(rawValue: defaults.string(forKey: "vpnProvider") ?? "") ?? .auto
         pauseOnDrop = defaults.object(forKey: "pauseOnDrop") as? Bool ?? true
         onboardingDone = defaults.bool(forKey: "onboardingDone")
+        checkUpdates = defaults.object(forKey: "checkUpdates") as? Bool ?? true
         isHydrating = false
 
         qBQuitObserver = NotificationCenter.default.addObserver(
@@ -153,6 +160,7 @@ final class GuardState: ObservableObject {
         Task { await checkNow() }
         rescheduleTimer()
         startPathMonitor()
+        scheduleUpdateCheck()
     }
 
     func start() {
@@ -160,6 +168,34 @@ final class GuardState: ObservableObject {
         rescheduleTimer()
         startPathMonitor()
         if notifications { askNotificationPermission() }
+        scheduleUpdateCheck()
+    }
+
+    func scheduleUpdateCheck() {
+        guard checkUpdates, !didCheckUpdate else { return }
+        didCheckUpdate = true
+        Task { await checkForUpdate() }
+    }
+
+    func checkForUpdate() async {
+        updateCheckMessage = nil
+        let current = UpdateCheck.currentVersion()
+        guard let latest = await UpdateCheck.fetchLatest() else {
+            updateCheckMessage = "Could not reach GitHub Releases"
+            return
+        }
+        let tag = UpdateCheck.normalize(latest.tag)
+        if UpdateCheck.isNewer(latest.tag, than: current) {
+            updateAvailable = UpdateInfo(latest: tag, current: current, htmlURL: latest.htmlURL)
+            updateCheckMessage = "Version \(tag) is available (you have \(current))"
+        } else {
+            updateAvailable = nil
+            updateCheckMessage = "You’re on \(current) — latest is \(tag)"
+        }
+    }
+
+    func openLatestRelease() {
+        NSWorkspace.shared.open(updateAvailable?.htmlURL ?? UpdateCheck.releasesPage)
     }
 
     func checkNow(notifyAbout: Bool = true) async {

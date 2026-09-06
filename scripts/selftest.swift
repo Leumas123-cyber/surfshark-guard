@@ -91,6 +91,20 @@ expect(replaced.contains("utun14") && !replaced.contains("utun7"), "ini replace"
 let crlf = IniEditor.binding(in: "[BitTorrent]\r\nSession\\Interface=utun2\r\n")
 expect(crlf.iface == "utun2", "ini crlf")
 
+print("== update check ==")
+expect(UpdateCheck.normalize("v1.4") == "1.4", "strip v prefix")
+expect(UpdateCheck.normalize("1.4") == "1.4", "already bare")
+expect(UpdateCheck.isNewer("v1.4", than: "1.3"), "1.4 newer than 1.3")
+expect(UpdateCheck.isNewer("1.10", than: "1.2"), "numeric 1.10 > 1.2")
+expect(!UpdateCheck.isNewer("1.3", than: "1.3"), "equal is not newer")
+expect(!UpdateCheck.isNewer("1.2", than: "1.4"), "older is not newer")
+expect(!UpdateCheck.isNewer("", than: "1.4"), "empty latest")
+let sampleJSON = Data(#"{"tag_name":"v1.2","html_url":"https://github.com/Leumas123-cyber/surfshark-guard/releases/tag/v1.2"}"#.utf8)
+let parsed = UpdateCheck.parseLatest(from: sampleJSON)
+expect(parsed?.tag == "v1.2", "parse tag_name")
+expect(parsed?.htmlURL.absoluteString.contains("/releases/tag/v1.2") == true, "parse html_url")
+expect(UpdateCheck.parseLatest(from: Data("{}".utf8)) == nil, "empty json")
+
 print("== webui urls ==")
 let base = URL(string: "http://127.0.0.1:8080")!
 let login = QBWebUI.endpoint("/api/v2/auth/login", on: base).absoluteString

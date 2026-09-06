@@ -1,8 +1,8 @@
 # Surfshark Guard
 
-Unofficial macOS menu-bar helper (Apple Silicon, macOS 13+) that keeps [qBittorrent](https://www.qbittorrent.org) bound to the current VPN tunnel ([Surfshark](https://surfshark.com), plus unofficial detection for Mullvad, Proton VPN, or any WireGuard).
+Unofficial macOS menu-bar helper (Apple Silicon and Intel, macOS 13+) that keeps [qBittorrent](https://www.qbittorrent.org) bound to the current VPN tunnel ([Surfshark](https://surfshark.com), plus unofficial detection for Mullvad, Proton VPN, or any WireGuard).
 
-**Download:** [latest DMG](https://github.com/Leumas123-cyber/surfshark-guard/releases/latest)
+**Download:** [latest release](https://github.com/Leumas123-cyber/surfshark-guard/releases/latest) — two DMGs: **arm64** (Apple Silicon only) and **universal** (Apple Silicon + Intel).
 
 This is **not** a Surfshark or qBittorrent product. It is a hobby upload. I vibe-coded it and I am **not** an expert on this codebase. The notes below describe how the project is *supposed* to work. If something breaks, **fix it yourself** (or don’t use it). There is no support.
 
@@ -34,13 +34,18 @@ The DMG is ad-hoc signed (no paid Apple Developer ID / notarization). macOS Gate
 xattr -dr com.apple.quarantine /Applications/SurfsharkGuard.app
 ```
 
-Needs an Apple Silicon Mac. Intel Macs are not supported.
+Releases ship **two** DMGs, same version, different binaries:
+
+- `SurfsharkGuard-*-arm64.dmg` — Apple Silicon only
+- `SurfsharkGuard-*-universal.dmg` — Apple Silicon + Intel (`arm64` + `x86_64`)
+
+macOS 13 or newer.
 
 ## Using it
 
 1. Connect the VPN as a **full tunnel**. Do not put qBittorrent in a split-tunnel / bypass list. Settings → Provider can stay **Auto**, or pick Surfshark / Mullvad / Proton VPN / Any WireGuard.
 2. Start Surfshark Guard. A shield appears in the menu bar. First launch opens a short setup checklist.
-3. Turn on **Watch**. Optionally **Auto-fix**, **Pause if down**, and **Alerts**.
+3. Turn on **Watch**. Optionally **Auto-fix**, **Pause if down**, and **Alerts**. Settings can check GitHub Releases for a newer tag (download page only — nothing is installed automatically).
 4. For live rebinding while qBittorrent is running, enable qBittorrent’s Web UI on `127.0.0.1` and type those credentials under **Settings**. The password is stored in the **macOS Keychain** on your Mac (older UserDefaults copies are migrated once, then deleted). Requests only go to localhost. If the menu says **Web UI offline / check**, qBittorrent’s Web UI is not answering. The menu prefers the **live** Web UI binding over a stale `qBittorrent.ini`.
 
 **Quit qB & bind** quits qBittorrent normally (not force-killed) and writes the tunnel name into `qBittorrent.ini`.
@@ -69,6 +74,7 @@ This is the part I *can* describe from the source. If I got a detail wrong, read
 | `GuardState.swift` | Timer (5 s default, with tolerance), `NWPathMonitor`, pause-on-drop, notifications, auto-fix, login-item toggle |
 | `Views.swift` | Menu and settings UI |
 | `OnboardingView.swift` | First-run checklist (VPN, tunnel, localhost Web UI, login test) |
+| `UpdateCheck.swift` | Compares this build to the latest GitHub Release tag (no Sparkle) |
 
 There are no servers of mine, no analytics, and no account. The app only talks to your Mac and, if you enable it, `http://127.0.0.1` on qBittorrent.
 
@@ -110,7 +116,9 @@ cd surfshark-guard
 ./scripts/make-app.sh
 ```
 
-That script builds **arm64** only, strips debug info, remaps source paths so the binary should not contain the builder’s `/Users/…` path, ad-hoc signs the app, and makes a DMG.
+That script builds **two apps**: an arm64-only bundle and a universal (`lipo`) bundle. It strips debug info, remaps source paths so the binaries should not contain the builder’s `/Users/…` path, ad-hoc signs both, and makes two DMGs.
+
+Settings can **Check now** against `https://api.github.com/repos/Leumas123-cyber/surfshark-guard/releases/latest`. If a newer tag exists, the menu shows a download button. It does not download or install anything by itself.
 
 ## If it does not work
 
@@ -133,6 +141,7 @@ The published source and the Release DMG are meant to contain no home-folder pat
 
 - Only qBittorrent is rebound. Other apps need Surfshark’s own kill switch or a firewall.
 - An ini-file fix applies on the next qBittorrent start unless the Web UI is enabled.
+- Intel Macs need macOS 13+. The helper does not run on older Intel-only macOS releases.
 
 ## License
 

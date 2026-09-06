@@ -82,6 +82,16 @@ final class ParsersTests: XCTestCase {
         XCTAssertNil(Detector.ipv6Hint(ifconfigText: fixtureIfconfig, tunnel: nil))
     }
 
+    func testUpdateCheckVersions() {
+        XCTAssertEqual(UpdateCheck.normalize("v1.4"), "1.4")
+        XCTAssertTrue(UpdateCheck.isNewer("v1.4", than: "1.3"))
+        XCTAssertTrue(UpdateCheck.isNewer("1.10", than: "1.2"))
+        XCTAssertFalse(UpdateCheck.isNewer("1.3", than: "1.3"))
+        XCTAssertFalse(UpdateCheck.isNewer("1.2", than: "1.4"))
+        let data = Data(#"{"tag_name":"v1.2","html_url":"https://example.com/r"}"#.utf8)
+        XCTAssertEqual(UpdateCheck.parseLatest(from: data)?.tag, "v1.2")
+    }
+
     func testVPNProviderMatching() {
         XCTAssertTrue(VPNProvider.surfshark.matches("123 /Applications/Surfshark.app"))
         XCTAssertFalse(VPNProvider.surfshark.matches("123 SurfsharkGuard"))

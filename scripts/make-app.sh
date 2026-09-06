@@ -1,12 +1,15 @@
 #!/bin/bash
-# Build a portable Apple Silicon app bundle with no local machine paths
-# or debug residue in the binary.
+# Build two portable app bundles (Apple Silicon only, and universal) with
+# no local machine paths or debug residue in the binaries.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 ROOT="$(pwd)"
-APP="build/SurfsharkGuard.app"
-BIN_OUT="$APP/Contents/MacOS/SurfsharkGuard"
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' scripts/Info.plist)"
+ARM_APP="build/SurfsharkGuard-arm64.app"
+UNI_APP="build/SurfsharkGuard.app"
+ARM_DMG="build/SurfsharkGuard-${VERSION}-arm64.dmg"
+UNI_DMG="build/SurfsharkGuard-${VERSION}-universal.dmg"
 
 if [ -d /Applications/Xcode.app/Contents/Developer ]; then
   export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
@@ -21,7 +24,7 @@ else
   echo "▸ Skipping swift test (needs full Xcode; GitHub Actions still runs it)"
 fi
 
-echo "▸ Selftest (parsers, keychain, detector, webui)…"
+echo "▸ Selftest (parsers, keychain, detector, webui, updates)…"
 mkdir -p .build
 swiftc -parse-as-library -O -target arm64-apple-macos13 \
   -o .build/selftest \
@@ -31,73 +34,131 @@ swiftc -parse-as-library -O -target arm64-apple-macos13 \
   Sources/SurfsharkGuard/WebUI.swift \
   Sources/SurfsharkGuard/Keychain.swift \
   Sources/SurfsharkGuard/VPNProvider.swift \
+  Sources/SurfsharkGuard/UpdateCheck.swift \
   scripts/selftest.swift
 ./.build/selftest
 
-echo "▸ Building release (arm64, no debug info)…"
-swift build -c release --arch arm64 \
-  -Xswiftc -gnone \
-  -Xswiftc -O \
-  -Xswiftc -file-prefix-map \
-  -Xswiftc "${ROOT}=." \
-  -Xcc "-ffile-prefix-map=${ROOT}=."
+find_release_bin() {
+  for cand in \
+    .build/arm64-apple-macosx/release/SurfsharkGuard \
+    .build/x86_64-apple-macosx/release/SurfsharkGuard \
+    .build/release/SurfsharkGuard \
+    .build/out/Products/Release/SurfsharkGuard
+  do
+    if [ -f "$cand" ]; then
+      printf '%s' "$cand"
+      return 0
+    fi
+  done
+  return 1
+}
 
-BIN_SRC=""
-for cand in \
-  .build/arm64-apple-macosx/release/SurfsharkGuard \
-  .build/release/SurfsharkGuard \
-  .build/out/Products/Release/SurfsharkGuard
-do
-  if [ -f "$cand" ]; then
-    BIN_SRC="$cand"
-    break
+build_arch() {
+  local arch="$1"
+  echo "▸ Building release ($arch, no debug info)…"
+  swift build -c release --arch "$arch" \
+    -Xswiftc -gnone \
+    -Xswiftc -O \
+    -Xswiftc -target \
+    -Xswiftc "${arch}-apple-macos13" \
+    -Xswiftc -file-prefix-map \
+    -Xswiftc "${ROOT}=." \
+    -Xcc "-ffile-prefix-map=${ROOT}=."
+  local src
+  src="$(find_release_bin)" || {
+    echo "error: $arch release binary not found" >&2
+    exit 1
+  }
+  cp "$src" ".build/SurfsharkGuard-$arch"
+  file ".build/SurfsharkGuard-$arch"
+}
+
+write_plist() {
+  local dest="$1"
+  shift
+  cp scripts/Info.plist "$dest"
+  /usr/libexec/PlistBuddy -c "Delete :LSArchitecturePriority" "$dest" >/dev/null
+  /usr/libexec/PlistBuddy -c "Add :LSArchitecturePriority array" "$dest" >/dev/null
+  local i=0
+  for arch in "$@"; do
+    /usr/libexec/PlistBuddy -c "Add :LSArchitecturePriority:$i string $arch" "$dest" >/dev/null
+    i=$((i + 1))
+  done
+}
+
+package_app() {
+  local bin="$1"
+  local dest="$2"
+  shift 2
+  local expected="$*"
+  rm -rf "$dest"
+  mkdir -p "$dest/Contents/MacOS" "$dest/Contents/Resources"
+  cp "$bin" "$dest/Contents/MacOS/SurfsharkGuard"
+  write_plist "$dest/Contents/Info.plist" "$@"
+  if [ -f "Assets/AppIcon.icns" ]; then
+    cp Assets/AppIcon.icns "$dest/Contents/Resources/AppIcon.icns"
   fi
-done
-if [ -z "$BIN_SRC" ]; then
-  echo "error: release binary not found" >&2
-  exit 1
-fi
+  strip -xS "$dest/Contents/MacOS/SurfsharkGuard"
+  codesign --force --sign - --timestamp=none "$dest"
+  xattr -cr "$dest" 2>/dev/null || true
+  touch "$dest"
 
-rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN_SRC" "$BIN_OUT"
-cp scripts/Info.plist "$APP/Contents/Info.plist"
-if [ -f "Assets/AppIcon.icns" ]; then
-  cp Assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-fi
+  local arches
+  arches="$(lipo -archs "$dest/Contents/MacOS/SurfsharkGuard")"
+  echo "   $dest arches: $arches"
+  for arch in $expected; do
+    echo "$arches" | grep -q "$arch" || {
+      echo "error: $dest missing $arch slice" >&2
+      exit 1
+    }
+  done
+  if [ "$expected" = "arm64" ] && echo "$arches" | grep -q x86_64; then
+    echo "error: arm64 build unexpectedly contains x86_64" >&2
+    exit 1
+  fi
 
-# Drop leftover symbol / path tables that Swift may still emit.
-strip -xS "$BIN_OUT"
+  if strings "$dest/Contents/MacOS/SurfsharkGuard" \
+       | grep -E '/Users/|/home/|anonymous|Samuel|zcode' >/dev/null; then
+    echo "error: $dest still contains a local path or personal token" >&2
+    strings "$dest/Contents/MacOS/SurfsharkGuard" \
+      | grep -E '/Users/|/home/|anonymous|Samuel|zcode' >&2
+    exit 1
+  fi
+}
 
-# Ad-hoc sign so the bundle is a valid app on any Apple Silicon Mac.
-# Recipients still need to right-click → Open the first time (Gatekeeper),
-# or build from source on their own machine.
-codesign --force --sign - --timestamp=none "$APP"
-xattr -cr "$APP" 2>/dev/null || true
+make_dmg() {
+  local src_app="$1"
+  local dmg="$2"
+  local stage="build/dmg-root"
+  echo "▸ Creating ${dmg}"
+  rm -rf "$stage" "$dmg"
+  mkdir -p "$stage"
+  cp -R "$src_app" "$stage/SurfsharkGuard.app"
+  ln -s /Applications "$stage/Applications"
+  find "$stage" -name '.DS_Store' -delete
+  xattr -cr "$stage" 2>/dev/null || true
+  hdiutil create -volname "Surfshark Guard" -srcfolder "$stage" -ov -format UDZO "$dmg" >/dev/null
+  xattr -cr "$dmg" 2>/dev/null || true
+  rm -rf "$stage"
+}
 
-echo "▸ Checking the binary for local residue…"
-if strings "$BIN_OUT" | grep -E '/Users/|/home/|anonymous|Samuel|zcode' >/dev/null; then
-  echo "error: binary still contains a local path or personal token" >&2
-  strings "$BIN_OUT" | grep -E '/Users/|/home/|anonymous|Samuel|zcode' >&2
-  exit 1
-fi
+build_arch arm64
+build_arch x86_64
+lipo -create \
+  .build/SurfsharkGuard-arm64 \
+  .build/SurfsharkGuard-x86_64 \
+  -output .build/SurfsharkGuard-universal
 
-touch "$APP"
+echo "▸ Packaging Apple Silicon app…"
+package_app .build/SurfsharkGuard-arm64 "$ARM_APP" arm64
+echo "▸ Packaging universal app…"
+package_app .build/SurfsharkGuard-universal "$UNI_APP" arm64 x86_64
 
-echo "▸ Creating DMG…"
-STAGE="build/dmg-root"
-DMG="build/SurfsharkGuard-1.3-arm64.dmg"
-rm -rf "$STAGE" "$DMG"
-mkdir -p "$STAGE"
-cp -R "$APP" "$STAGE/SurfsharkGuard.app"
-ln -s /Applications "$STAGE/Applications"
-# Avoid copying Finder junk into the image.
-find "$STAGE" -name '.DS_Store' -delete
-xattr -cr "$STAGE" 2>/dev/null || true
-hdiutil create -volname "Surfshark Guard" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
-xattr -cr "$DMG" 2>/dev/null || true
-rm -rf "$STAGE"
+make_dmg "$ARM_APP" "$ARM_DMG"
+make_dmg "$UNI_APP" "$UNI_DMG"
 
-echo "✅ $APP"
-echo "   DMG:      $DMG"
-echo "   Install:  open $DMG  (drag the app into Applications)"
+echo "✅ Apple Silicon: $ARM_APP"
+echo "   DMG:           $ARM_DMG"
+echo "✅ Universal:     $UNI_APP"
+echo "   DMG:           $UNI_DMG"
+echo "   Install:  open either DMG and drag the app into Applications"

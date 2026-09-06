@@ -16,6 +16,12 @@ struct GuardView: View {
                 }
                 .buttonStyle(.bordered)
             }
+            if let update = state.updateAvailable {
+                Button(action: state.openLatestRelease) {
+                    Label("Version \(update.latest) available", systemImage: "arrow.down.app")
+                }
+                .buttonStyle(.bordered)
+            }
             Divider()
             detailRows
             if let hint = state.snapshot?.ipv6Hint {
@@ -283,6 +289,20 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
 
+            Section("Updates") {
+                Toggle("Check GitHub Releases on launch", isOn: $state.checkUpdates)
+                HStack {
+                    Button("Check now") {
+                        Task { await state.checkForUpdate() }
+                    }
+                    if state.updateAvailable != nil {
+                        Button("Open download page", action: state.openLatestRelease)
+                    }
+                }
+                Text(state.updateCheckMessage ?? "Current version \(UpdateCheck.currentVersion()). Looks at the public GitHub latest release only — no Sparkle, no auto-install.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             Section("qBittorrent Web UI (for live fix)") {
                 Toggle("Use Web UI", isOn: $state.webuiEnabled)
                 TextField("URL", text: $state.webuiURL)
@@ -296,6 +316,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480, height: 620)
+        .frame(width: 480, height: 720)
     }
 }
