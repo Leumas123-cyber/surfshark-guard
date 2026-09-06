@@ -152,10 +152,11 @@ final class GuardState: ObservableObject {
                     as? NSRunningApplication,
                   app.bundleIdentifier?.lowercased().contains("qbittorrent") == true
             else { return }
+            let state = self
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
-                await self?.checkNow(notifyAbout: false)
-                if self?.autoFix == true { await self?.attemptFix(automatic: true) }
+                await state?.checkNow(notifyAbout: false)
+                if state?.autoFix == true { await state?.attemptFix(automatic: true) }
             }
         }
 
@@ -163,7 +164,8 @@ final class GuardState: ObservableObject {
             forName: .NSProcessInfoPowerStateDidChange,
             object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.rescheduleTimer() }
+            let state = self
+            Task { @MainActor in state?.rescheduleTimer() }
         }
 
         Task { await checkNow() }
@@ -382,8 +384,9 @@ final class GuardState: ObservableObject {
         let interval = effectiveWatchInterval
         let scheduled = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) {
             [weak self] _ in
+            let state = self
             Task { @MainActor in
-                await self?.checkNow()
+                await state?.checkNow()
             }
         }
         scheduled.tolerance = min(2, interval * 0.3)
@@ -399,14 +402,14 @@ final class GuardState: ObservableObject {
         let monitor = NWPathMonitor()
         monitor.pathUpdateHandler = { [weak self] _ in
             DispatchQueue.main.async {
-                guard let self else { return }
-                self.pathDebounce?.cancel()
+                guard let state = self else { return }
+                state.pathDebounce?.cancel()
                 let work = DispatchWorkItem {
                     Task { @MainActor in
-                        await self.checkNow()
+                        await state.checkNow()
                     }
                 }
-                self.pathDebounce = work
+                state.pathDebounce = work
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
             }
         }
