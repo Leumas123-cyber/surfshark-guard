@@ -30,11 +30,11 @@ EOF
 )"
 
 if gh release view "$TAG" >/dev/null 2>&1; then
-  echo "▸ Updating existing release $TAG…"
+  echo "Updating existing release ${TAG}"
   gh release upload "$TAG" "$ARM" "$UNI" --clobber
   gh release edit "$TAG" --notes "$NOTES"
 else
-  echo "▸ Creating release $TAG…"
+  echo "Creating release ${TAG}"
   gh release create "$TAG" \
     --title "Surfshark Guard ${VERSION}" \
     --notes "$NOTES" \
