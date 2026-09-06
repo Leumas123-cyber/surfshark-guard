@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test-and-build:
+    name: Test and build (Apple Silicon)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show toolchain
+        run: swift --version && uname -m
+      - name: Build app
+        run: |
+          chmod +x scripts/make-app.sh
+          ./scripts/make-app.sh
+      - name: Confirm arm64 and no local paths
+        run: |
+          file build/SurfsharkGuard.app/Contents/MacOS/SurfsharkGuard
+          lipo -archs build/SurfsharkGuard.app/Contents/MacOS/SurfsharkGuard | grep -q arm64
