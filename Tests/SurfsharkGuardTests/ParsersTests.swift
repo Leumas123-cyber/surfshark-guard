@@ -111,6 +111,11 @@ final class ParsersTests: XCTestCase {
         XCTAssertTrue(result.contains("[Network]"))
     }
 
+    func testIniBindingReadsCRLF() {
+        let (iface, _) = IniEditor.binding(in: "[BitTorrent]\r\nSession\\Interface=utun2\r\n")
+        XCTAssertEqual(iface, "utun2")
+    }
+
     func testIniApplyReplacesExistingBinding() {
         let text = "[BitTorrent]\nSession\\Interface=utun7\n"
         let result = IniEditor.applyBinding(interface: "utun14", address: nil,

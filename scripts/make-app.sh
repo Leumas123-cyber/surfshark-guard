@@ -21,6 +21,18 @@ else
   echo "▸ Skipping swift test (needs full Xcode; GitHub Actions still runs it)"
 fi
 
+echo "▸ Selftest (parsers, keychain, detector, webui)…"
+mkdir -p .build
+swiftc -parse-as-library -O -target arm64-apple-macos13 \
+  -o .build/selftest \
+  Sources/SurfsharkGuard/Parsers.swift \
+  Sources/SurfsharkGuard/Detector.swift \
+  Sources/SurfsharkGuard/QBittorrent.swift \
+  Sources/SurfsharkGuard/WebUI.swift \
+  Sources/SurfsharkGuard/Keychain.swift \
+  scripts/selftest.swift
+./.build/selftest
+
 echo "▸ Building release (arm64, no debug info)…"
 swift build -c release --arch arm64 \
   -Xswiftc -gnone \
@@ -70,7 +82,7 @@ touch "$APP"
 
 echo "▸ Creating DMG…"
 STAGE="build/dmg-root"
-DMG="build/SurfsharkGuard-1.1-arm64.dmg"
+DMG="build/SurfsharkGuard-1.2-arm64.dmg"
 rm -rf "$STAGE" "$DMG"
 mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/SurfsharkGuard.app"

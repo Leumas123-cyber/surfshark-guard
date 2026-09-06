@@ -1,10 +1,34 @@
 import Foundation
 
+enum WebUIReachability: Equatable {
+    case unused
+    case online
+    case offline
+
+    var menuLabel: String {
+        switch self {
+        case .unused: return "off"
+        case .online: return "online"
+        case .offline: return "offline / check"
+        }
+    }
+}
+
 /// Minimal qBittorrent Web API client — live interface rebinding only.
 struct QBWebUI {
     let baseURL: URL
     let user: String
     let password: String
+
+    static func endpoint(_ path: String, on baseURL: URL) -> URL {
+        let trimmed = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        var root = baseURL.absoluteString
+        if !root.hasSuffix("/") { root += "/" }
+        if let base = URL(string: root), let url = URL(string: trimmed, relativeTo: base) {
+            return url.absoluteURL
+        }
+        return baseURL.appending(path: trimmed)
+    }
 
     private func post(_ path: String, form: [String: String]) async throws -> String {
         var components = URLComponents()
@@ -12,7 +36,7 @@ struct QBWebUI {
             URLQueryItem(name: $0.key, value: $0.value)
         }
         let body = components.percentEncodedQuery?.data(using: .utf8) ?? Data()
-        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        var request = URLRequest(url: Self.endpoint(path, on: baseURL))
         request.httpMethod = "POST"
         request.httpBody = body
         request.setValue("application/x-www-form-urlencoded",
@@ -20,6 +44,28 @@ struct QBWebUI {
         request.setValue(baseURL.absoluteString, forHTTPHeaderField: "Referer")
         let (data, _) = try await URLSession.shared.data(for: request)
         return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    private static let probeSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 1.5
+        config.timeoutIntervalForResource = 2
+        config.waitsForConnectivity = false
+        return URLSession(configuration: config)
+    }()
+
+    /// Cheap reachability: any HTTP answer means the Web UI is up (403 is fine).
+    static func probe(baseURL: URL) async -> WebUIReachability {
+        var request = URLRequest(url: endpoint("/api/v2/app/version", on: baseURL))
+        request.httpMethod = "GET"
+        request.timeoutInterval = 1.5
+        request.setValue(baseURL.absoluteString, forHTTPHeaderField: "Referer")
+        do {
+            let (_, response) = try await probeSession.data(for: request)
+            return response is HTTPURLResponse ? .online : .offline
+        } catch {
+            return .offline
+        }
     }
 
     func login() async -> Bool {

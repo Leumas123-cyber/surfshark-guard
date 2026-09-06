@@ -55,6 +55,9 @@ struct GuardView: View {
         VStack(alignment: .leading, spacing: 5) {
             row("Tunnel", tunnelText)
             row("qBittorrent", qbtText)
+            if state.webuiEnabled {
+                row("Web UI", webUIText)
+            }
             if let path = state.snapshot?.configPath ?? state.snapshot?.writeTarget {
                 row("Config", abbreviated(path))
             }
@@ -75,6 +78,18 @@ struct GuardView: View {
 
     private var qbtText: String {
         state.snapshot.map { $0.qbRunning ? "running" : "not running" } ?? "–"
+    }
+
+    private var webUIText: some View {
+        let status = state.snapshot?.webUI ?? .unused
+        let color: Color = {
+            switch status {
+            case .online: return .green
+            case .offline: return .orange
+            case .unused: return .secondary
+            }
+        }()
+        return Text(status.menuLabel).foregroundColor(color)
     }
 
     private var bindingText: some View {
@@ -210,13 +225,13 @@ struct SettingsView: View {
                     get: { state.loginItemEnabled },
                     set: { state.setLoginItem($0) }))
                 Picker("Interval", selection: $state.watchInterval) {
+                    Text("5 s").tag(5.0)
                     Text("10 s").tag(10.0)
                     Text("15 s").tag(15.0)
                     Text("30 s").tag(30.0)
-                    Text("60 s").tag(60.0)
                 }
                 .pickerStyle(.segmented)
-                Text("Watch checks the tunnel and binding in the background. Problems show as a macOS notification.")
+                Text("Watch runs route/ifconfig on a timer (default 5 s, never a tight loop). Low Power Mode and heat stretch the gap. Problems show as a macOS notification.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -234,7 +249,7 @@ struct SettingsView: View {
                     .textFieldStyle(.roundedBorder)
                 SecureField("Password", text: $state.webuiPass)
                     .textFieldStyle(.roundedBorder)
-                Text("In qBittorrent: Preferences → Web UI. Keep it on 127.0.0.1 — nothing leaves this Mac.")
+                Text("In qBittorrent: Preferences → Web UI. Keep it on 127.0.0.1 — nothing leaves this Mac. The password is stored in the macOS Keychain, not in UserDefaults.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

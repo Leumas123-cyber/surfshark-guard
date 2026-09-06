@@ -41,6 +41,7 @@ struct Snapshot {
     var qbAddress: String?
     var configPath: String?
     var writeTarget: String
+    var webUI: WebUIReachability
     var checkedAt: Date
 
     var status: GuardStatus {
@@ -81,22 +82,32 @@ final class GuardState: ObservableObject {
         didSet { defaults.set(webuiUser, forKey: "webuiUser") }
     }
     @Published var webuiPass: String {
-        didSet { defaults.set(webuiPass, forKey: "webuiPass") }
+        didSet {
+            guard !isHydrating else { return }
+            if webuiPass.isEmpty {
+                KeychainStore.deletePassword()
+            } else {
+                _ = KeychainStore.savePassword(webuiPass)
+            }
+        }
     }
 
     private let defaults = UserDefaults.standard
     private var timer: Timer?
     private var qBQuitObserver: Any?
+    private var powerObserver: Any?
+    private var isHydrating = true
 
     private init() {
         autoWatch = defaults.object(forKey: "autoWatch") as? Bool ?? true
         autoFix = defaults.object(forKey: "autoFix") as? Bool ?? false
         notifications = defaults.object(forKey: "notifications") as? Bool ?? true
-        watchInterval = defaults.object(forKey: "watchInterval") as? Double ?? 15
+        watchInterval = defaults.object(forKey: "watchInterval") as? Double ?? 5
         webuiEnabled = defaults.bool(forKey: "webuiEnabled")
         webuiURL = defaults.string(forKey: "webuiURL") ?? "http://127.0.0.1:8080"
         webuiUser = defaults.string(forKey: "webuiUser") ?? ""
-        webuiPass = defaults.string(forKey: "webuiPass") ?? ""
+        webuiPass = KeychainStore.migrateFromUserDefaults(defaults)
+        isHydrating = false
 
         qBQuitObserver = NotificationCenter.default.addObserver(
             forName: NSWorkspace.didTerminateApplicationNotification,
@@ -113,6 +124,13 @@ final class GuardState: ObservableObject {
             }
         }
 
+        powerObserver = NotificationCenter.default.addObserver(
+            forName: .NSProcessInfoPowerStateDidChange,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.rescheduleTimer() }
+        }
+
         Task { await checkNow() }
         rescheduleTimer()
     }
@@ -124,6 +142,7 @@ final class GuardState: ObservableObject {
     }
 
     func checkNow(notifyAbout: Bool = true) async {
+        if checking { return }
         checking = true
         defer { checking = false }
 
@@ -139,7 +158,8 @@ final class GuardState: ObservableObject {
     }
 
     private func gather() async -> Snapshot {
-        await Task.detached(priority: .userInitiated) {
+        let probeURL = webuiEnabled ? URL(string: webuiURL) : nil
+        return await Task.detached(priority: .utility) {
             let tunnel = Detector.detect()
             let (existing, target) = QBittorrent.findConfig()
             var iface: String?
@@ -148,6 +168,12 @@ final class GuardState: ObservableObject {
                                                             encoding: .utf8) {
                 (iface, addr) = IniEditor.binding(in: text)
             }
+            let webUI: WebUIReachability
+            if let probeURL {
+                webUI = await QBWebUI.probe(baseURL: probeURL)
+            } else {
+                webUI = .unused
+            }
             return Snapshot(
                 tunnel: tunnel,
                 qbRunning: Detector.qbittorrentRunning(),
@@ -155,6 +181,7 @@ final class GuardState: ObservableObject {
                 qbAddress: addr,
                 configPath: existing,
                 writeTarget: target,
+                webUI: webUI,
                 checkedAt: Date()
             )
         }.value
@@ -219,8 +246,10 @@ final class GuardState: ObservableObject {
         }
         lastAction = "Quitting qBittorrent…"
         apps.forEach { _ = $0.terminate() }
-        for _ in 0..<20 where !Detector.qbittorrentRunning() { break }
-        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        for _ in 0..<20 {
+            if !Detector.qbittorrentRunning() { break }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
         if !Detector.qbittorrentRunning() {
             await checkNow(notifyAbout: false)
             await attemptFix(automatic: false)
@@ -245,11 +274,24 @@ final class GuardState: ObservableObject {
         }
     }
 
+    /// Never tighter than 5 s. Low Power Mode stretches the gap so route/ifconfig
+    /// is not a tight loop.
+    private var effectiveWatchInterval: TimeInterval {
+        let floor: TimeInterval = 5
+        let base = max(watchInterval, floor)
+        if ProcessInfo.processInfo.isLowPowerModeEnabled { return max(base, 15) }
+        switch ProcessInfo.processInfo.thermalState {
+        case .serious, .critical: return max(base, 30)
+        default: return base
+        }
+    }
+
     private func rescheduleTimer() {
         timer?.invalidate()
         timer = nil
         guard autoWatch else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: watchInterval, repeats: true) {
+        let interval = effectiveWatchInterval
+        let scheduled = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) {
             [weak self] _ in
             Task { @MainActor in
                 await self?.checkNow()
@@ -258,6 +300,8 @@ final class GuardState: ObservableObject {
                 }
             }
         }
+        scheduled.tolerance = min(2, interval * 0.3)
+        timer = scheduled
     }
 
     private func askNotificationPermission() {

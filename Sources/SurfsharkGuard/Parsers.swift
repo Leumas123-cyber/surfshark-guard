@@ -110,12 +110,18 @@ enum IniEditor {
     static let interfaceKeys = ["Session\\Interface", "Session\\InterfaceName"]
     static let addressKey = "Session\\InterfaceAddress"
 
+    static func normalizedLines(_ text: String) -> [Substring] {
+        text.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+    }
+
     static func binding(in text: String) -> (iface: String?, addr: String?) {
         var iface: String?
         var addr: String?
         var inSection = false
-        for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = raw.trimmingCharacters(in: .whitespaces)
+        for raw in normalizedLines(text) {
+            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             if line.hasPrefix("[") && line.hasSuffix("]") {
                 inSection = line.lowercased() == "[bittorrent]"
                 continue
@@ -133,8 +139,7 @@ enum IniEditor {
     }
 
     static func applyBinding(interface: String, address: String?, to text: String) -> String {
-        var lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
+        var lines = normalizedLines(text).map(String.init)
 
         var wanted: [(key: String, value: String)] =
             interfaceKeys.map { ($0, interface) }
@@ -142,12 +147,12 @@ enum IniEditor {
 
         var sectionStart: Int? = nil
         for (i, raw) in lines.enumerated()
-        where raw.trimmingCharacters(in: .whitespaces).lowercased() == "[bittorrent]" {
+        where raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "[bittorrent]" {
             sectionStart = i
             break
         }
         if sectionStart == nil {
-            if let last = lines.last, !last.trimmingCharacters(in: .whitespaces).isEmpty {
+            if let last = lines.last, !last.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 lines.append("")
             }
             lines.append("[BitTorrent]")
@@ -157,7 +162,7 @@ enum IniEditor {
         var sectionEnd = lines.count
         if let start = sectionStart {
             for i in (start + 1)..<lines.count where
-                lines[i].trimmingCharacters(in: .whitespaces).hasPrefix("[") {
+                lines[i].trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("[") {
                 sectionEnd = i
                 break
             }
@@ -169,7 +174,7 @@ enum IniEditor {
                 for i in (start + 1)..<sectionEnd {
                     let key = lines[i].split(separator: "=", maxSplits: 1,
                                              omittingEmptySubsequences: false)
-                        .first.map { $0.trimmingCharacters(in: .whitespaces) }
+                        .first.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                     if key == entry.key {
                         lines[i] = "\(entry.key)=\(entry.value)"
                         replaced = true

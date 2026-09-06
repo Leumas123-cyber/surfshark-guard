@@ -41,7 +41,7 @@ Needs an Apple Silicon Mac. Intel Macs are not supported.
 1. Connect Surfshark as a **full tunnel**. Do not put qBittorrent in Surfshark Bypasser / split tunneling.
 2. Start Surfshark Guard. A shield appears in the menu bar.
 3. Turn on **Watch**. Optionally **Auto-fix** and **Alerts**.
-4. For live rebinding while qBittorrent is running, enable qBittorrent’s Web UI on `127.0.0.1` and type those credentials under **Settings**. They stay on **your** Mac (`UserDefaults`) and are only sent to localhost.
+4. For live rebinding while qBittorrent is running, enable qBittorrent’s Web UI on `127.0.0.1` and type those credentials under **Settings**. The password is stored in the **macOS Keychain** on your Mac (older UserDefaults copies are migrated once, then deleted). Requests only go to localhost. If the menu says **Web UI offline / check**, qBittorrent’s Web UI is not answering.
 
 **Quit qB & bind** quits qBittorrent normally (not force-killed) and writes the tunnel name into `qBittorrent.ini`.
 
@@ -63,8 +63,9 @@ This is the part I *can* describe from the source. If I got a detail wrong, read
 | `Detector.swift` | Asks macOS which VPN interface is the Surfshark tunnel |
 | `Parsers.swift` | Parses `route` / `netstat` / `ifconfig` text and edits `qBittorrent.ini` |
 | `QBittorrent.swift` | Finds the newest qBittorrent config on **this** user account and writes a backup + new binding |
-| `WebUI.swift` | Optional localhost login to qBittorrent’s Web API to change the interface without restarting |
-| `GuardState.swift` | Timer, notifications, auto-fix, login-item toggle |
+| `WebUI.swift` | Optional localhost login plus a cheap reachability probe |
+| `Keychain.swift` | Web UI password in the macOS Keychain (migrates leftover UserDefaults) |
+| `GuardState.swift` | Timer (5 s default, with tolerance), notifications, auto-fix, login-item toggle |
 | `Views.swift` | Menu and settings UI |
 
 There are no servers of mine, no analytics, and no account. The app only talks to your Mac and, if you enable it, `http://127.0.0.1` on qBittorrent.
@@ -94,7 +95,7 @@ Paths use **your** home directory at runtime. Nothing from my Mac is hardcoded.
 - **Web UI on:** `POST /api/v2/auth/login` then `POST /api/v2/app/setPreferences` with the new interface name. Takes effect immediately.
 - **Web UI off:** write the ini (with a `.bak-…` next to it). qBittorrent must be quit first or it will overwrite the file when it exits. Auto-fix will **not** force-quit qBittorrent.
 
-**Watch** repeats the check on a timer. **Auto-fix** tries the Web UI, or the ini write once qBittorrent is already quit.
+**Watch** repeats `route` / `ifconfig` on a timer (default 5 seconds, never a tight loop). The timer has macOS coalescing tolerance and stretches in Low Power Mode. **Auto-fix** tries the Web UI, or the ini write once qBittorrent is already quit.
 
 ### Build (if you don’t trust the DMG)
 
@@ -121,7 +122,7 @@ Pull requests are fine if you want to send a fix. I may or may not merge them. I
 
 ## Privacy of this upload
 
-The published source and the Release DMG are meant to contain no home-folder paths, no passwords, and no settings from my machine. Web-UI credentials you type later live only on **your** Mac under bundle id `app.surfsharkguard`.
+The published source and the Release DMG are meant to contain no home-folder paths, no passwords, and no settings from my machine. The Web UI password you type later lives in **your** Keychain (`app.surfsharkguard.webui`), not in the app binary.
 
 ## Limits
 
