@@ -68,25 +68,25 @@ enum Detector {
 
         if let def = defaultIface, vpnIfaces[def] != nil {
             chosen = def
-            why.append("Default-Route liegt auf \(def)")
+            why.append("Default route is on \(def)")
         } else {
             let withIP = routed.filter { vpnIfaces[$0] != nil }.sorted()
             if let first = withIP.first {
                 chosen = first
-                why.append("Full-Tunnel-Routen (0/1, 128.0/1) über \(first)")
+                why.append("Full-tunnel routes (0/1, 128.0/1) via \(first)")
             }
         }
 
         if chosen == nil, running, vpnIfaces.count == 1 {
             chosen = vpnIfaces.keys.first
-            why.append("einziges VPN-Interface mit IPv4 (Surfshark läuft)")
+            why.append("only VPN interface with IPv4 (Surfshark is running)")
         }
 
         guard let iface = chosen else { return nil }
 
-        why.append(running ? "Surfshark-Prozess läuft"
-                           : "ACHTUNG: kein Surfshark-Prozess gefunden")
-        if wgHint { why.append("WireGuard-Systemerweiterung aktiv") }
+        why.append(running ? "Surfshark process is running"
+                           : "WARNING: no Surfshark process found")
+        if wgHint { why.append("WireGuard system extension is active") }
 
         return TunnelInfo(
             iface: iface,

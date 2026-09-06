@@ -46,9 +46,9 @@ struct GuardView: View {
         state.snapshot?.status.color ?? .secondary
     }
     private var statusText: String {
-        guard let snap = state.snapshot else { return "Noch nicht geprüft…" }
+        guard let snap = state.snapshot else { return "Not checked yet…" }
         let time = snap.checkedAt.formatted(date: .omitted, time: .shortened)
-        return "\(snap.status.headline) · geprüft \(time)"
+        return "\(snap.status.headline) · checked \(time)"
     }
 
     private var detailRows: some View {
@@ -56,16 +56,16 @@ struct GuardView: View {
             row("Tunnel", tunnelText)
             row("qBittorrent", qbtText)
             if let path = state.snapshot?.configPath ?? state.snapshot?.writeTarget {
-                row("Konfiguration", abbreviated(path))
+                row("Config", abbreviated(path))
             }
-            row("Bindung", bindingText)
+            row("Binding", bindingText)
         }
         .font(.callout)
     }
 
     private var tunnelText: String {
         guard let t = state.snapshot?.tunnel else {
-            return "keiner — Surfshark verbinden!"
+            return "none — connect Surfshark!"
         }
         var text = "\(t.iface)"
         if let ip = t.ip { text += " · \(ip)" }
@@ -74,7 +74,7 @@ struct GuardView: View {
     }
 
     private var qbtText: String {
-        state.snapshot.map { $0.qbRunning ? "läuft" : "läuft nicht" } ?? "–"
+        state.snapshot.map { $0.qbRunning ? "running" : "not running" } ?? "–"
     }
 
     private var bindingText: some View {
@@ -82,10 +82,10 @@ struct GuardView: View {
         let text: String
         let color: Color?
         if let s = snap {
-            var t = s.qbInterface ?? "KEINE („Beliebige Schnittstelle“)"
+            var t = s.qbInterface ?? "NONE (“Any interface”)"
             if let addr = s.qbAddress { t += " · IP \(addr)" }
             if s.status == .wrongBinding {
-                t += "  ←  Tunnel ist \(s.tunnel?.iface ?? "?")"
+                t += "  ←  tunnel is \(s.tunnel?.iface ?? "?")"
             }
             text = t
             color = s.status == .ok ? .green : (s.status == .wrongBinding ? .red : nil)
@@ -125,7 +125,7 @@ struct GuardView: View {
                 }
             }
             if !tunnel.otherCandidates.isEmpty {
-                Text("weitere VPN-Interfaces: " + tunnel.otherCandidates.joined(separator: ", "))
+                Text("other VPN interfaces: " + tunnel.otherCandidates.joined(separator: ", "))
                     .font(.caption2).foregroundStyle(.secondary)
             }
         }
@@ -133,9 +133,9 @@ struct GuardView: View {
 
     private var toggles: some View {
         HStack(spacing: 14) {
-            Toggle("Überwachen", isOn: $state.autoWatch)
-            Toggle("Auto-Fix", isOn: $state.autoFix)
-            Toggle("Meldungen", isOn: $state.notifications)
+            Toggle("Watch", isOn: $state.autoWatch)
+            Toggle("Auto-fix", isOn: $state.autoFix)
+            Toggle("Alerts", isOn: $state.notifications)
         }
         .toggleStyle(.checkbox)
         .font(.callout)
@@ -146,12 +146,12 @@ struct GuardView: View {
             Button {
                 Task { await state.checkNow() }
             } label: {
-                Label("Jetzt prüfen", systemImage: "arrow.clockwise")
+                Label("Check now", systemImage: "arrow.clockwise")
             }
             Button {
                 Task { await state.quitQBittorrentAndFix() }
             } label: {
-                Label("qB beenden & binden", systemImage: "link")
+                Label("Quit qB & bind", systemImage: "link")
             }
             .disabled(state.snapshot?.status == .ok)
             Button {
@@ -165,7 +165,7 @@ struct GuardView: View {
                     }
                 }
             } label: {
-                Label("Einstellungen", systemImage: "gear")
+                Label("Settings", systemImage: "gear")
             }
             Spacer()
             Button {
@@ -173,7 +173,7 @@ struct GuardView: View {
             } label: {
                 Image(systemName: "power")
             }
-            .help("Surfshark Guard beenden")
+            .help("Quit Surfshark Guard")
         }
         .labelStyle(.titleAndIcon)
         .font(.callout)
@@ -205,36 +205,36 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Überwachung") {
-                Toggle("Bei Anmeldung starten", isOn: Binding(
+            Section("Watching") {
+                Toggle("Open at login", isOn: Binding(
                     get: { state.loginItemEnabled },
                     set: { state.setLoginItem($0) }))
-                Picker("Intervall", selection: $state.watchInterval) {
+                Picker("Interval", selection: $state.watchInterval) {
                     Text("10 s").tag(10.0)
                     Text("15 s").tag(15.0)
                     Text("30 s").tag(30.0)
                     Text("60 s").tag(60.0)
                 }
                 .pickerStyle(.segmented)
-                Text("„Überwachen“ prüft Tunnel und Bindung im Hintergrund; bei Problemen kommt eine macOS-Meldung.")
+                Text("Watch checks the tunnel and binding in the background. Problems show as a macOS notification.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
-            Section("Automatischer Fix") {
-                Toggle("Bindung automatisch korrigieren", isOn: $state.autoFix)
-                Text("Live über die Web-UI (unten), sonst in der Konfigurationsdatei, sobald qBittorrent beendet ist — dessen Beenden wird nie erzwungen.")
+            Section("Automatic fix") {
+                Toggle("Fix binding automatically", isOn: $state.autoFix)
+                Text("Live via the Web UI below, otherwise in the config file once qBittorrent has quit — it is never force-quit.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
-            Section("qBittorrent Web-UI (für Live-Korrektur)") {
-                Toggle("Web-UI nutzen", isOn: $state.webuiEnabled)
+            Section("qBittorrent Web UI (for live fix)") {
+                Toggle("Use Web UI", isOn: $state.webuiEnabled)
                 TextField("URL", text: $state.webuiURL)
                     .textFieldStyle(.roundedBorder)
-                TextField("Benutzer", text: $state.webuiUser)
+                TextField("User", text: $state.webuiUser)
                     .textFieldStyle(.roundedBorder)
-                SecureField("Passwort", text: $state.webuiPass)
+                SecureField("Password", text: $state.webuiPass)
                     .textFieldStyle(.roundedBorder)
-                Text("In qBittorrent: Einstellungen → Web-UI aktivieren. Läuft nur auf 127.0.0.1 — nichts verlässt den Mac.")
+                Text("In qBittorrent: Preferences → Web UI. Keep it on 127.0.0.1 — nothing leaves this Mac.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

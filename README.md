@@ -40,10 +40,10 @@ Needs an Apple Silicon Mac. Intel Macs are not supported.
 
 1. Connect Surfshark as a **full tunnel**. Do not put qBittorrent in Surfshark Bypasser / split tunneling.
 2. Start Surfshark Guard. A shield appears in the menu bar.
-3. Turn on **Überwachen**. Optionally **Auto-Fix** and **Meldungen**.
-4. For live rebinding while qBittorrent is running, enable qBittorrent’s Web UI on `127.0.0.1` and type those credentials under **Einstellungen**. They stay on **your** Mac (`UserDefaults`) and are only sent to localhost.
+3. Turn on **Watch**. Optionally **Auto-fix** and **Alerts**.
+4. For live rebinding while qBittorrent is running, enable qBittorrent’s Web UI on `127.0.0.1` and type those credentials under **Settings**. They stay on **your** Mac (`UserDefaults`) and are only sent to localhost.
 
-**qB beenden & binden** quits qBittorrent normally (not force-killed) and writes the tunnel name into `qBittorrent.ini`.
+**Quit qB & bind** quits qBittorrent normally (not force-killed) and writes the tunnel name into `qBittorrent.ini`.
 
 | Icon | Meaning |
 |---|---|
@@ -65,7 +65,7 @@ This is the part I *can* describe from the source. If I got a detail wrong, read
 | `QBittorrent.swift` | Finds the newest qBittorrent config on **this** user account and writes a backup + new binding |
 | `WebUI.swift` | Optional localhost login to qBittorrent’s Web API to change the interface without restarting |
 | `GuardState.swift` | Timer, notifications, auto-fix, login-item toggle |
-| `Views.swift` | Menu and settings UI (German labels; I never translated the UI) |
+| `Views.swift` | Menu and settings UI |
 
 There are no servers of mine, no analytics, and no account. The app only talks to your Mac and, if you enable it, `http://127.0.0.1` on qBittorrent.
 
@@ -94,7 +94,7 @@ Paths use **your** home directory at runtime. Nothing from my Mac is hardcoded.
 - **Web UI on:** `POST /api/v2/auth/login` then `POST /api/v2/app/setPreferences` with the new interface name. Takes effect immediately.
 - **Web UI off:** write the ini (with a `.bak-…` next to it). qBittorrent must be quit first or it will overwrite the file when it exits. Auto-fix will **not** force-quit qBittorrent.
 
-`Überwachen` repeats the check on a timer. `Auto-Fix` tries the Web UI, or the ini write once qBittorrent is already quit.
+**Watch** repeats the check on a timer. **Auto-fix** tries the Web UI, or the ini write once qBittorrent is already quit.
 
 ### Build (if you don’t trust the DMG)
 
@@ -113,7 +113,7 @@ Fix it yourself. This is vibe-coded. I am not offering support, refunds, or a gu
 Ideas if you want to poke at it:
 
 - Confirm Surfshark is connected and qBittorrent is **not** in Bypasser.
-- Click **Jetzt prüfen** and read the status text.
+- Click **Check now** and read the status text.
 - Enable the Web UI on localhost if you want live fixes.
 - Read `Detector.swift` and `GuardState.swift`.
 

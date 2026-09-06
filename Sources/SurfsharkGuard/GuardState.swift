@@ -27,9 +27,9 @@ enum GuardStatus {
 
     var headline: String {
         switch self {
-        case .ok: return "Alles dicht — qBittorrent hängt am Tunnel"
-        case .wrongBinding: return "Falsche Bindung — Leak-Gefahr"
-        case .noTunnel: return "Kein Surfshark-Tunnel aktiv"
+        case .ok: return "All sealed — qBittorrent is on the tunnel"
+        case .wrongBinding: return "Wrong binding — leak risk"
+        case .noTunnel: return "No Surfshark tunnel"
         }
     }
 }
@@ -163,32 +163,32 @@ final class GuardState: ObservableObject {
     func attemptFix(automatic: Bool) async {
         guard let snap = snapshot else { return }
         guard let tunnel = snap.tunnel else {
-            lastError = "Kein Tunnel aktiv — erst Surfshark verbinden."
+            lastError = "No tunnel — connect Surfshark first."
             return
         }
 
         if webuiEnabled, !webuiUser.isEmpty {
             guard let url = URL(string: webuiURL) else {
-                lastError = "Web-UI-URL ungültig: \(webuiURL)"
+                lastError = "Invalid Web UI URL: \(webuiURL)"
                 return
             }
             let ui = QBWebUI(baseURL: url, user: webuiUser, password: webuiPass)
             if await ui.login() {
                 let address = snap.qbAddress == tunnel.ip ? snap.qbAddress : nil
                 if await ui.setInterface(tunnel.iface, address: address) {
-                    lastAction = "Web-UI: Bindung live auf \(tunnel.iface) gesetzt ✓"
+                    lastAction = "Web UI: binding set live to \(tunnel.iface) ✓"
                     lastError = nil
                     await checkNow()
                     return
                 }
             }
-            lastError = "Web-UI-Login fehlgeschlagen (URL/Benutzer/Passwort prüfen)."
+            lastError = "Web UI login failed (check URL / user / password)."
         }
 
         if snap.qbRunning {
-            lastError = "qBittorrent läuft noch — beenden (Button unten) oder Web-UI aktivieren."
-            if automatic { postNotification("Surfshark Guard — Aktion nötig",
-                                            "qBittorrent läuft mit falscher Bindung. App beenden, damit der Fix greifen kann.") }
+            lastError = "qBittorrent is still running — quit it (button below) or enable the Web UI."
+            if automatic { postNotification("Surfshark Guard — action needed",
+                                            "qBittorrent is on the wrong binding. Quit the app so the fix can apply.") }
             return
         }
 
@@ -196,15 +196,15 @@ final class GuardState: ObservableObject {
             let lines = try QBittorrent.writeBinding(
                 interface: tunnel.iface, tunnelIP: tunnel.ip,
                 oldAddress: snap.qbAddress)
-            lastAction = "Bindung geschrieben: " + lines.joined(separator: ", ")
+            lastAction = "Binding written: " + lines.joined(separator: ", ")
             lastError = nil
             if automatic {
-                postNotification("Surfshark Guard — Bindung korrigiert",
-                                 "qBittorrent ist zu — Bindung liegt jetzt auf \(tunnel.iface). Jetzt neu starten.")
+                postNotification("Surfshark Guard — binding fixed",
+                                 "qBittorrent is quit — binding is now \(tunnel.iface). Start it again.")
             }
             await checkNow()
         } catch {
-            lastError = "Konnte Konfiguration nicht schreiben: \(error.localizedDescription)"
+            lastError = "Could not write the config: \(error.localizedDescription)"
         }
     }
 
@@ -217,7 +217,7 @@ final class GuardState: ObservableObject {
             await attemptFix(automatic: false)
             return
         }
-        lastAction = "qBittorrent wird beendet…"
+        lastAction = "Quitting qBittorrent…"
         apps.forEach { _ = $0.terminate() }
         for _ in 0..<20 where !Detector.qbittorrentRunning() { break }
         try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -240,8 +240,8 @@ final class GuardState: ObservableObject {
             }
             objectWillChange.send()
         } catch {
-            lastError = "Login-Item nicht gesetzt: \(error.localizedDescription) " +
-                        "(App nach /Applications kopieren, nicht aus .build starten)"
+            lastError = "Could not set login item: \(error.localizedDescription) " +
+                        "(copy the app to /Applications, don’t launch from .build)"
         }
     }
 
@@ -271,9 +271,9 @@ final class GuardState: ObservableObject {
         let text: String
         switch snap.status {
         case .wrongBinding:
-            text = "qBittorrent hängt an \(snap.qbInterface ?? "keiner Schnittstelle"), der Tunnel ist \(snap.tunnel?.iface ?? "?")."
+            text = "qBittorrent is on \(snap.qbInterface ?? "no interface"), the tunnel is \(snap.tunnel?.iface ?? "?")"
         case .noTunnel:
-            text = "Kein Surfshark-Tunnel aktiv — Torrents jetzt nicht starten."
+            text = "No Surfshark tunnel — don’t start torrents now."
         case .ok:
             return
         }

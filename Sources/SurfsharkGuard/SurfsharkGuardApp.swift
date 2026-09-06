@@ -13,7 +13,7 @@ struct SurfsharkGuardApp: App {
         }
         .menuBarExtraStyle(.window)
 
-        Window("Surfshark Guard — Einstellungen", id: "sg-settings") {
+        Window("Surfshark Guard — Settings", id: "sg-settings") {
             SettingsView()
                 .environmentObject(state)
         }
