@@ -9,7 +9,7 @@ Unofficial macOS menu-bar helper (Apple Silicon and Intel, macOS 13+) that keeps
 | [`SurfsharkGuard-1.3-arm64.dmg`](https://github.com/Leumas123-cyber/surfshark-guard/releases/latest) | Apple Silicon only |
 | [`SurfsharkGuard-1.3-universal.dmg`](https://github.com/Leumas123-cyber/surfshark-guard/releases/latest) | Apple Silicon or Intel |
 
-Same app, two separate binaries. There is no 1.4.
+Same app, two separate binaries.
 
 This is **not** a Surfshark or qBittorrent product. It is a hobby upload. I vibe-coded it and I am **not** an expert on this codebase. The notes below describe how the project is *supposed* to work. If something breaks, **fix it yourself** (or don’t use it). There is no support.
 
