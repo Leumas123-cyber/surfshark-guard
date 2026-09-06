@@ -40,24 +40,24 @@ swiftc -parse-as-library -O -target arm64-apple-macos13 \
 ./.build/selftest
 
 find_release_bin() {
-  for cand in \
-    .build/arm64-apple-macosx/release/SurfsharkGuard \
-    .build/x86_64-apple-macosx/release/SurfsharkGuard \
-    .build/release/SurfsharkGuard \
-    .build/out/Products/Release/SurfsharkGuard
-  do
-    if [ -f "$cand" ]; then
-      printf '%s' "$cand"
-      return 0
-    fi
-  done
+  local scratch="$1"
+  local found=""
+  while IFS= read -r cand; do
+    found="$cand"
+  done < <(find "$scratch" -type f -name SurfsharkGuard \
+            ! -path '*.dSYM*' ! -path '*Index*' 2>/dev/null | sort)
+  if [ -n "$found" ]; then
+    printf '%s' "$found"
+    return 0
+  fi
   return 1
 }
 
 build_arch() {
   local arch="$1"
+  local scratch=".build/${arch}"
   echo "▸ Building release ($arch, no debug info)…"
-  swift build -c release --arch "$arch" \
+  swift build -c release --arch "$arch" --scratch-path "$scratch" \
     -Xswiftc -gnone \
     -Xswiftc -O \
     -Xswiftc -target \
@@ -66,8 +66,15 @@ build_arch() {
     -Xswiftc "${ROOT}=." \
     -Xcc "-ffile-prefix-map=${ROOT}=."
   local src
-  src="$(find_release_bin)" || {
-    echo "error: $arch release binary not found" >&2
+  src="$(find_release_bin "$scratch")" || {
+    echo "error: $arch release binary not found under $scratch" >&2
+    exit 1
+  }
+  local got
+  got="$(lipo -archs "$src")"
+  echo "   $src ($got)"
+  echo "$got" | grep -q "$arch" || {
+    echo "error: expected $arch, got: $got" >&2
     exit 1
   }
   cp "$src" ".build/SurfsharkGuard-$arch"
