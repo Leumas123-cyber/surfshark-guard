@@ -9,28 +9,76 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release tag to attach the DMGs to (e.g. v1.3)"
+        description: "Release tag to attach the DMGs to (e.g. v1.4)"
         required: true
         type: string
-      checkout_ref:
-        description: "Git ref to build (empty = the tag itself)"
-        required: false
-        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
-  release:
-    name: Build and publish DMGs
+  build:
+    name: Build release DMGs
     runs-on: macos-14
-    permissions:
-      contents: write
+    timeout-minutes: 40
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout the release tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.checkout_ref || inputs.release_tag || github.ref }}
+          ref: ${{ format('refs/tags/{0}', inputs.release_tag || github.ref_name) }}
+          persist-credentials: false
 
       - name: Show toolchain
-        run: swift --version && uname -m
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+(\.[0-9]+){1,2}([.-][0-9A-Za-z.-]+)?$ ]] || {
+            echo "error: invalid release tag: $RELEASE_TAG" >&2
+            exit 1
+          }
+          swift --version
+          uname -m
+
+      - name: Import Developer ID certificate when configured
+        env:
+          DEVELOPER_ID_APPLICATION_P12: ${{ secrets.DEVELOPER_ID_APPLICATION_P12 }}
+          DEVELOPER_ID_APPLICATION_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+          DEVELOPER_ID_APPLICATION_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION_IDENTITY }}
+          BUILD_KEYCHAIN_PASSWORD: ${{ secrets.BUILD_KEYCHAIN_PASSWORD }}
+        run: |
+          values=0
+          for value in "$DEVELOPER_ID_APPLICATION_P12" \
+                       "$DEVELOPER_ID_APPLICATION_P12_PASSWORD" \
+                       "$DEVELOPER_ID_APPLICATION_IDENTITY" \
+                       "$BUILD_KEYCHAIN_PASSWORD"; do
+            [ -n "$value" ] && values=$((values + 1))
+          done
+          if [ "$values" -eq 0 ]; then
+            echo "Developer ID secrets are not configured; using ad-hoc signing."
+            exit 0
+          fi
+          if [ "$values" -ne 4 ]; then
+            echo "error: Developer ID signing secrets are only partially configured" >&2
+            exit 1
+          fi
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/release-signing.keychain-db"
+          trap 'rm -f "$CERTIFICATE_PATH"' EXIT
+          printf '%s' "$DEVELOPER_ID_APPLICATION_P12" | base64 -D > "$CERTIFICATE_PATH"
+          security create-keychain -p "$BUILD_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$BUILD_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$DEVELOPER_ID_APPLICATION_P12_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$BUILD_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          echo "CODESIGN_IDENTITY=$DEVELOPER_ID_APPLICATION_IDENTITY" >> "$GITHUB_ENV"
+          echo "RELEASE_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
 
       - name: Build both apps
         run: |
@@ -40,7 +88,7 @@ jobs:
       - name: Confirm DMGs
         run: |
           VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' scripts/Info.plist)"
-          TAG="${{ inputs.release_tag || github.ref_name }}"
+          TAG="$RELEASE_TAG"
           EXPECTED="${TAG#v}"
           if [ "$VERSION" != "$EXPECTED" ]; then
             echo "error: Info.plist version $VERSION does not match tag $TAG" >&2
@@ -49,9 +97,72 @@ jobs:
           ls -lh "build/SurfsharkGuard-${VERSION}-arm64.dmg" \
                  "build/SurfsharkGuard-${VERSION}-universal.dmg"
 
+      - name: Notarize DMGs when configured
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          values=0
+          for value in "$APPLE_ID" "$APPLE_TEAM_ID" "$APPLE_APP_PASSWORD"; do
+            [ -n "$value" ] && values=$((values + 1))
+          done
+          if [ "$values" -eq 0 ]; then
+            echo "Notarization secrets are not configured; skipping notarization."
+            exit 0
+          fi
+          if [ "$values" -ne 3 ] || [ -z "${CODESIGN_IDENTITY:-}" ]; then
+            echo "error: notarization requires all Apple credentials and Developer ID signing" >&2
+            exit 1
+          fi
+          for dmg in build/SurfsharkGuard-*.dmg; do
+            xcrun notarytool submit "$dmg" --wait \
+              --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_PASSWORD"
+            xcrun stapler staple "$dmg"
+            xcrun stapler validate "$dmg"
+          done
+
+      - name: Upload release files
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-dmgs
+          retention-days: 3
+          if-no-files-found: error
+          path: build/SurfsharkGuard-*.dmg
+
+      - name: Remove temporary signing keychain
+        if: always()
+        run: |
+          if [ -n "${RELEASE_KEYCHAIN_PATH:-}" ]; then
+            security delete-keychain "$RELEASE_KEYCHAIN_PATH" || true
+          fi
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: macos-14
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+    steps:
+      - name: Checkout release scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ format('refs/tags/{0}', inputs.release_tag || github.ref_name) }}
+          persist-credentials: false
+
+      - name: Download release files
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-dmgs
+          path: build
+
       - name: Publish to GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${{ inputs.release_tag || github.ref_name }}"
-          ./scripts/publish-release.sh "$TAG"
+          chmod +x scripts/publish-release.sh
+          ./scripts/publish-release.sh "$RELEASE_TAG"

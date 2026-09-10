@@ -25,20 +25,29 @@ enum RouteParser {
 
 enum NetstatParser {
     /// utun/ipsec/ppp interfaces that carry full-tunnel routes
-    /// (default, 0/1, 128.0/1 — WireGuard style).
+    /// (default, or both 0/1 and 128.0/1 — WireGuard style).
     static func tunnelCandidates(from output: String) -> Set<String> {
-        let fullTunnel = ["default", "0/1", "128/1", "128.0/1",
-                          "0.0.0.0/1", "128.0.0.0/1"]
-        var hits = Set<String>()
+        let lowerHalf = Set(["0/1", "0.0.0.0/1"])
+        let upperHalf = Set(["128/1", "128.0/1", "128.0.0.0/1"])
+        var defaults = Set<String>()
+        var lowerHits = Set<String>()
+        var upperHits = Set<String>()
         for line in output.split(separator: "\n") {
             guard line.first != " " else { continue }
             let parts = line.split(separator: " ", omittingEmptySubsequences: true)
             guard parts.count >= 4 else { continue }
-            if fullTunnel.contains(String(parts[0])), isVPNInterface(String(parts[3])) {
-                hits.insert(String(parts[3]))
+            let destination = String(parts[0])
+            let interface = String(parts[3])
+            guard isVPNInterface(interface) else { continue }
+            if destination == "default" {
+                defaults.insert(interface)
+            } else if lowerHalf.contains(destination) {
+                lowerHits.insert(interface)
+            } else if upperHalf.contains(destination) {
+                upperHits.insert(interface)
             }
         }
-        return hits
+        return defaults.union(lowerHits.intersection(upperHits))
     }
 }
 

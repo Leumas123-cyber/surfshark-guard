@@ -28,13 +28,27 @@ enum UpdateCheck {
         return a.compare(b, options: .numeric) == .orderedDescending
     }
 
+    static func isTrustedReleaseURL(_ url: URL) -> Bool {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.scheme?.lowercased() == "https",
+              components.host?.lowercased() == "github.com",
+              components.user == nil,
+              components.password == nil
+        else { return false }
+        return components.path.hasPrefix(
+            "/Leumas123-cyber/surfshark-guard/releases/"
+        )
+    }
+
     static func parseLatest(from data: Data) -> (tag: String, htmlURL: URL)? {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let tag = json["tag_name"] as? String
         else { return nil }
         let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        if let raw = json["html_url"] as? String, let url = URL(string: raw) {
+        if let raw = json["html_url"] as? String,
+           let url = URL(string: raw),
+           isTrustedReleaseURL(url) {
             return (trimmed, url)
         }
         return (trimmed, releasesPage)

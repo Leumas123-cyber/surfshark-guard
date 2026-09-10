@@ -5,12 +5,22 @@ on:
     branches: [main, master]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-and-build:
     name: Test and build (arm64 + universal)
     runs-on: macos-14
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Show toolchain
         run: swift --version && uname -m
       - name: Build apps
@@ -32,9 +42,10 @@ jobs:
           echo "$UNI_ARCHS" | grep -q x86_64
           ls -lh build/SurfsharkGuard-*-arm64.dmg build/SurfsharkGuard-*-universal.dmg
       - name: Keep DMGs as workflow artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dmgs
+          retention-days: 7
           path: |
             build/SurfsharkGuard-*-arm64.dmg
             build/SurfsharkGuard-*-universal.dmg

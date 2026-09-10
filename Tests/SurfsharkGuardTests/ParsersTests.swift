@@ -66,6 +66,19 @@ final class ParsersTests: XCTestCase {
     func testNetstatParserTunnelCandidates() {
         XCTAssertEqual(NetstatParser.tunnelCandidates(from: fixtureNetstat),
                        ["utun3"])
+
+        let lowerHalfOnly = """
+        Destination Gateway Flags Netif
+        0/1 10.8.0.1 UGSc utun3
+        """
+        XCTAssertTrue(NetstatParser.tunnelCandidates(from: lowerHalfOnly).isEmpty)
+
+        let splitAcrossInterfaces = """
+        Destination Gateway Flags Netif
+        0/1 10.8.0.1 UGSc utun3
+        128.0/1 10.14.0.1 UGSc utun9
+        """
+        XCTAssertTrue(NetstatParser.tunnelCandidates(from: splitAcrossInterfaces).isEmpty)
     }
 
     func testIfconfigParser() {
@@ -90,6 +103,17 @@ final class ParsersTests: XCTestCase {
         XCTAssertFalse(UpdateCheck.isNewer("1.2", than: "1.3"))
         let data = Data(#"{"tag_name":"v1.2","html_url":"https://example.com/r"}"#.utf8)
         XCTAssertEqual(UpdateCheck.parseLatest(from: data)?.tag, "v1.2")
+        XCTAssertEqual(UpdateCheck.parseLatest(from: data)?.htmlURL,
+                       UpdateCheck.releasesPage)
+
+        let trusted = Data(
+            #"{"tag_name":"v1.4","html_url":"https://github.com/Leumas123-cyber/surfshark-guard/releases/tag/v1.4"}"#.utf8
+        )
+        XCTAssertEqual(UpdateCheck.parseLatest(from: trusted)?.htmlURL.absoluteString,
+                       "https://github.com/Leumas123-cyber/surfshark-guard/releases/tag/v1.4")
+        XCTAssertFalse(UpdateCheck.isTrustedReleaseURL(
+            URL(string: "https://github.com.evil.example/Leumas123-cyber/surfshark-guard/releases/tag/v1.4")!
+        ))
     }
 
     func testMenuBarTooltip() {
@@ -157,4 +181,146 @@ final class ParsersTests: XCTestCase {
         XCTAssertTrue(result.contains("Session\\Interface=utun14"))
         XCTAssertFalse(result.contains("utun7"))
     }
+
+    func testWebUIURLValidation() {
+        for raw in [
+            "http://127.0.0.1:8080",
+            "http://localhost:8080",
+            "https://localhost",
+            "http://[::1]:8080",
+        ] {
+            XCTAssertNotNil(WebUIURLValidator.validated(raw), raw)
+        }
+        for raw in [
+            "http://127.0.0.1.evil.example:8080",
+            "https://example.com",
+            "file:///tmp/qb",
+            "http://user:password@localhost:8080",
+        ] {
+            XCTAssertNil(WebUIURLValidator.validated(raw), raw)
+        }
+    }
+
+    func testBindingStatusIncludesAddressWhenBothAreKnown() {
+        let tunnel = TunnelInfo(
+            iface: "utun9", ip: "10.14.0.2", mtu: nil,
+            wireGuard: true, vpnRunning: true, vpnName: "VPN",
+            why: [], otherCandidates: []
+        )
+        XCTAssertTrue(bindingMatchesTunnel(
+            interface: "utun9", address: "10.14.0.2", tunnel: tunnel
+        ))
+        XCTAssertFalse(bindingMatchesTunnel(
+            interface: "utun9", address: "10.8.0.2", tunnel: tunnel
+        ))
+        XCTAssertTrue(bindingMatchesTunnel(
+            interface: "utun9", address: nil, tunnel: tunnel
+        ))
+    }
+
+    func testDetectorRejectsSingleHalfRoute() {
+        let halfRoute = "0/1 10.8.0.1 UGSc utun3\n"
+        XCTAssertNil(Detector.detect(
+            provider: .wireguard,
+            ifconfigText: fixtureIfconfig,
+            routeText: "",
+            netstatText: halfRoute,
+            processText: "42 wireguard-go"
+        ))
+
+        let tunnel = Detector.detect(
+            provider: .wireguard,
+            ifconfigText: fixtureIfconfig,
+            routeText: "",
+            netstatText: fixtureNetstat,
+            processText: "42 wireguard-go"
+        )
+        XCTAssertEqual(tunnel?.iface, "utun3")
+    }
+
+    func testStateTransitionHelpers() {
+        XCTAssertTrue(shouldPauseTorrents(previous: nil, current: .noTunnel))
+        XCTAssertTrue(shouldPauseTorrents(previous: .ok, current: .noTunnel))
+        XCTAssertFalse(shouldPauseTorrents(previous: .noTunnel, current: .noTunnel))
+
+        XCTAssertTrue(shouldNotifyProblem(
+            status: .wrongBinding, lastNotified: nil,
+            notificationsEnabled: true, requested: true
+        ))
+        XCTAssertFalse(shouldNotifyProblem(
+            status: .wrongBinding, lastNotified: .wrongBinding,
+            notificationsEnabled: true, requested: true
+        ))
+
+        var queue = CheckRequestQueue()
+        queue.enqueue(notify: false)
+        queue.enqueue(notify: true)
+        XCTAssertEqual(queue.take(), true)
+        XCTAssertNil(queue.take())
+
+        var gate = NotificationEpisodeGate()
+        XCTAssertTrue(gate.shouldPost())
+        XCTAssertFalse(gate.shouldPost())
+        gate.reset()
+        XCTAssertTrue(gate.shouldPost())
+    }
+
+    func testWebUIRequiresSuccessfulHTTPResponses() async {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [URLProtocolStub.self]
+        let session = URLSession(configuration: config)
+        let baseURL = URL(string: "http://127.0.0.1:8080")!
+
+        URLProtocolStub.handler = { request in
+            if request.url?.path == "/api/v2/auth/login" {
+                return (200, Data("Ok.".utf8))
+            }
+            if request.url?.path == "/api/v2/app/setPreferences" {
+                return (500, Data("failed".utf8))
+            }
+            return (404, Data())
+        }
+        let failingSet = QBWebUI(
+            baseURL: baseURL, user: "admin", password: "secret", session: session
+        )
+        let loginSucceeded = await failingSet.login()
+        let setSucceeded = await failingSet.setInterface("utun9", address: nil)
+        XCTAssertTrue(loginSucceeded)
+        XCTAssertFalse(setSucceeded)
+
+        URLProtocolStub.handler = { _ in (403, Data("Ok.".utf8)) }
+        let rejectedLogin = QBWebUI(
+            baseURL: baseURL, user: "admin", password: "secret", session: session
+        )
+        let rejected = await rejectedLogin.login()
+        XCTAssertFalse(rejected)
+    }
+}
+
+private final class URLProtocolStub: URLProtocol {
+    static var handler: ((URLRequest) -> (Int, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let handler = Self.handler, let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        let (status, data) = handler(request)
+        let response = HTTPURLResponse(
+            url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: nil
+        )!
+        client?.urlProtocol(
+            self, didReceive: response, cacheStoragePolicy: .notAllowed
+        )
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

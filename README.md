@@ -2,12 +2,12 @@
 
 Unofficial macOS menu-bar helper (Apple Silicon and Intel, macOS 13+) that keeps [qBittorrent](https://www.qbittorrent.org) bound to the current VPN tunnel ([Surfshark](https://surfshark.com), plus unofficial detection for Mullvad, Proton VPN, or any WireGuard).
 
-**Current version is 1.3.** People already download from the [latest GitHub Release](https://github.com/Leumas123-cyber/surfshark-guard/releases/latest) — pick **one** DMG. Official images are built by **GitHub Actions** on a version tag (`v1.3`), not uploaded from a personal Mac:
+**Current version is 1.4.** Download it from the [latest GitHub Release](https://github.com/Leumas123-cyber/surfshark-guard/releases/latest) — pick **one** DMG. Official images are built by **GitHub Actions** on the `v1.4` tag, not uploaded from a personal Mac:
 
 | File | Who it is for |
 |---|---|
-| [`SurfsharkGuard-1.3-arm64.dmg`](https://github.com/Leumas123-cyber/surfshark-guard/releases/latest) | Apple Silicon only |
-| [`SurfsharkGuard-1.3-universal.dmg`](https://github.com/Leumas123-cyber/surfshark-guard/releases/latest) | Apple Silicon or Intel |
+| [`SurfsharkGuard-1.4-arm64.dmg`](https://github.com/Leumas123-cyber/surfshark-guard/releases/latest) | Apple Silicon only |
+| [`SurfsharkGuard-1.4-universal.dmg`](https://github.com/Leumas123-cyber/surfshark-guard/releases/latest) | Apple Silicon or Intel |
 
 Same app, two separate binaries.
 
@@ -29,9 +29,13 @@ This app watches the tunnel and rewrites qBittorrent’s interface binding so yo
 - **No warranty.** MIT already says this. I’ll say it again: I vibe-coded this. I do not really know, in a professional sense, that every path is correct. Use at your own risk. If it fails, fix it or delete it.
 - **Not legal advice.** This README is not a lawyer. If you need one, get one.
 
-## What’s in 1.3
+## What’s in 1.4
 
 - Two Release DMGs (arm64-only, and universal), built on GitHub Actions
+- Hardened localhost-only Web UI credentials and stricter HTTP validation
+- Safer update links, Keychain handling, release workflow, and checksums
+- Simpler menu layout, clearer primary actions, setup progress, and subtle animations
+- More reliable auto-fix refresh, VPN-drop protection, and notification deduplication
 - Menu-bar hover text (`utun14 · sealed`) without opening the window
 - Pause torrents if the VPN tunnel drops (localhost Web UI)
 - Live binding from qBittorrent preferences, not only the ini file
@@ -39,7 +43,7 @@ This app watches the tunnel and rewrites qBittorrent’s interface binding so yo
 - IPv6 leak hint, setup checklist, more VPN names, app icon
 - In-app check against GitHub Releases (download page only)
 
-Older public tags are **v1.1** and **v1.2**. Use **v1.3**.
+Older public tags are **v1.1**, **v1.2**, and **v1.3**. Use **v1.4**.
 
 ## First-run on a downloaded DMG
 
@@ -53,10 +57,10 @@ The DMG is ad-hoc signed (no paid Apple Developer ID / notarization). macOS Gate
 xattr -dr com.apple.quarantine /Applications/SurfsharkGuard.app
 ```
 
-1.3 ships **two** DMGs (do not mix them up):
+1.4 ships **two** DMGs (do not mix them up):
 
-- `SurfsharkGuard-1.3-arm64.dmg` — Apple Silicon only
-- `SurfsharkGuard-1.3-universal.dmg` — Apple Silicon + Intel (`arm64` + `x86_64`)
+- `SurfsharkGuard-1.4-arm64.dmg` — Apple Silicon only
+- `SurfsharkGuard-1.4-universal.dmg` — Apple Silicon + Intel (`arm64` + `x86_64`)
 
 macOS 13 or newer. The app inside either image is still named **Surfshark Guard**.
 
@@ -135,9 +139,21 @@ cd surfshark-guard
 ./scripts/make-app.sh
 ```
 
-That script builds **two apps**: an arm64-only bundle and a universal (`lipo`) bundle. It strips debug info, remaps source paths so the binaries should not contain the builder’s `/Users/…` path, ad-hoc signs both, and makes two DMGs.
+That script builds **two apps**: an arm64-only bundle and a universal (`lipo`) bundle. It strips debug info, remaps source paths so the binaries should not contain the builder’s `/Users/…` path, and makes two DMGs. If a Developer ID Application identity is available (or `CODESIGN_IDENTITY` is set), it signs with the hardened runtime and a trusted timestamp; otherwise it falls back to ad-hoc signing.
 
-A version tag (`git tag v1.3 && git push origin v1.3`) runs the same script on GitHub’s `macos-14` runner and attaches both DMGs to that Release. You do not need to upload files from your laptop. The builds are still ad-hoc signed.
+A version tag (`git tag v1.4 && git push origin v1.4`) runs the same script on GitHub’s `macos-14` runner and attaches both DMGs plus SHA-256 checksums to that Release. You do not need to upload files from your laptop. Manual release runs always build the exact existing tag selected in the workflow.
+
+### Optional Developer ID signing and notarization
+
+The release workflow remains ad-hoc without Apple credentials. To enable trusted signing and notarization, configure these GitHub Actions secrets:
+
+- `DEVELOPER_ID_APPLICATION_P12` — base64-encoded Developer ID Application `.p12`
+- `DEVELOPER_ID_APPLICATION_P12_PASSWORD`
+- `DEVELOPER_ID_APPLICATION_IDENTITY` — exact `Developer ID Application: … (TEAMID)` name
+- `BUILD_KEYCHAIN_PASSWORD` — a random temporary CI keychain password
+- `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD` — App Store Connect notarization credentials
+
+Configure either all four signing secrets or none. Notarization requires all three Apple credentials plus signing. A partially configured set fails the release instead of silently publishing an untrusted build.
 
 Settings can **Check now** against `https://api.github.com/repos/Leumas123-cyber/surfshark-guard/releases/latest`. If a newer tag exists, the menu shows a download button. It does not download or install anything by itself.
 

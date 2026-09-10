@@ -50,12 +50,67 @@ struct Snapshot {
 
     var status: GuardStatus {
         guard let tunnel = tunnel else { return .noTunnel }
-        return qbInterface == tunnel.iface ? .ok : .wrongBinding
+        return bindingMatchesTunnel(
+            interface: qbInterface,
+            address: qbAddress,
+            tunnel: tunnel
+        ) ? .ok : .wrongBinding
     }
 
     /// Short hover text for the menu-bar icon — no need to open the window.
     var menuBarTooltip: String {
         MenuBarTooltip.text(tunnel: tunnel?.iface, qbInterface: qbInterface)
+    }
+}
+
+func bindingMatchesTunnel(interface: String?, address: String?,
+                          tunnel: TunnelInfo) -> Bool {
+    guard interface == tunnel.iface else { return false }
+    guard let address, !address.isEmpty,
+          let tunnelIP = tunnel.ip, !tunnelIP.isEmpty else {
+        return true
+    }
+    return address == tunnelIP
+}
+
+func shouldPauseTorrents(previous: GuardStatus?, current: GuardStatus) -> Bool {
+    previous != .noTunnel && current == .noTunnel
+}
+
+func shouldNotifyProblem(status: GuardStatus, lastNotified: GuardStatus?,
+                         notificationsEnabled: Bool, requested: Bool) -> Bool {
+    requested && notificationsEnabled && status != .ok && lastNotified != status
+}
+
+struct CheckRequestQueue {
+    private(set) var hasPending = false
+    private(set) var shouldNotify = false
+
+    mutating func enqueue(notify: Bool) {
+        hasPending = true
+        shouldNotify = shouldNotify || notify
+    }
+
+    mutating func take() -> Bool? {
+        guard hasPending else { return nil }
+        let notify = shouldNotify
+        hasPending = false
+        shouldNotify = false
+        return notify
+    }
+}
+
+struct NotificationEpisodeGate {
+    private(set) var active = false
+
+    mutating func shouldPost() -> Bool {
+        guard !active else { return false }
+        active = true
+        return true
+    }
+
+    mutating func reset() {
+        active = false
     }
 }
 
@@ -68,6 +123,7 @@ final class GuardState: ObservableObject {
     @Published var lastAction: String?
     @Published var lastError: String?
     private var lastNotifiedStatus: GuardStatus?
+    private var autoFixBlockedNotification = NotificationEpisodeGate()
 
     @Published var autoWatch: Bool {
         didSet { defaults.set(autoWatch, forKey: "autoWatch"); rescheduleTimer(); startPathMonitor() }
@@ -96,7 +152,9 @@ final class GuardState: ObservableObject {
             if webuiPass.isEmpty {
                 KeychainStore.deletePassword()
             } else {
-                _ = KeychainStore.savePassword(webuiPass)
+                if !KeychainStore.savePassword(webuiPass) {
+                    lastError = "Could not save the Web UI password in Keychain."
+                }
             }
         }
     }
@@ -128,6 +186,7 @@ final class GuardState: ObservableObject {
     private var pathDebounce: DispatchWorkItem?
     private var isHydrating = true
     private var didCheckUpdate = false
+    private var checkQueue = CheckRequestQueue()
 
     private init() {
         autoWatch = defaults.object(forKey: "autoWatch") as? Bool ?? true
@@ -156,7 +215,9 @@ final class GuardState: ObservableObject {
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
                 await state?.checkNow(notifyAbout: false)
-                if state?.autoFix == true { await state?.attemptFix(automatic: true) }
+                if state?.autoFix == true {
+                    _ = await state?.attemptFix(automatic: true)
+                }
             }
         }
 
@@ -206,41 +267,73 @@ final class GuardState: ObservableObject {
     }
 
     func openLatestRelease() {
-        NSWorkspace.shared.open(updateAvailable?.htmlURL ?? UpdateCheck.releasesPage)
+        let candidate = updateAvailable?.htmlURL
+        let destination = candidate.map(UpdateCheck.isTrustedReleaseURL) == true
+            ? candidate!
+            : UpdateCheck.releasesPage
+        NSWorkspace.shared.open(destination)
     }
 
     func checkNow(notifyAbout: Bool = true) async {
-        if checking { return }
+        if checking {
+            checkQueue.enqueue(notify: notifyAbout)
+            return
+        }
         checking = true
         defer { checking = false }
 
+        var shouldNotify = notifyAbout
+        while true {
+            await performCheck(notifyAbout: shouldNotify)
+            guard let queuedNotification = checkQueue.take() else { break }
+            shouldNotify = queuedNotification
+        }
+    }
+
+    private func performCheck(notifyAbout: Bool) async {
         let snap = await gather()
         let previous = snapshot?.status
         snapshot = snap
 
-        if previous != nil, previous != .noTunnel, snap.status == .noTunnel {
+        if shouldPauseTorrents(previous: previous, current: snap.status) {
             await pauseTorrentsIfNeeded()
         }
+        var fixApplied = false
         if autoFix, snap.status == .wrongBinding {
-            await attemptFix(automatic: true)
+            fixApplied = await attemptFix(automatic: true)
         }
 
-        if notifyAbout, previous != nil, previous != snap.status,
-           notifications, snap.status != .ok {
-            notifyProblem(snap)
+        if snap.status != .wrongBinding {
+            autoFixBlockedNotification.reset()
         }
-        lastNotifiedStatus = snap.status
+        if snap.status == .ok {
+            lastNotifiedStatus = nil
+        } else if !fixApplied, shouldNotifyProblem(
+            status: snap.status,
+            lastNotified: lastNotifiedStatus,
+            notificationsEnabled: notifications,
+            requested: notifyAbout
+        ) {
+            notifyProblem(snap)
+            lastNotifiedStatus = snap.status
+        }
     }
 
     private func gather() async -> Snapshot {
-        let probeURL = webuiEnabled ? URL(string: webuiURL) : nil
+        let probeURL = webuiEnabled ? WebUIURLValidator.validated(webuiURL) : nil
         let enabled = webuiEnabled
         let user = webuiUser
         let pass = webuiPass
         let provider = vpnProvider
         return await Task.detached(priority: .utility) {
             let ifconfigText = Shell.run("/sbin/ifconfig", ["-a"])
-            let tunnel = Detector.detect(provider: provider)
+            let tunnel = Detector.detect(
+                provider: provider,
+                ifconfigText: ifconfigText,
+                routeText: Shell.run("/sbin/route", ["-n", "get", "default"]),
+                netstatText: Shell.run("/usr/sbin/netstat", ["-rn", "-f", "inet"]),
+                processText: Shell.run("/usr/bin/pgrep", ["-ifl", provider.pgrepPattern])
+            )
             let (existing, target) = QBittorrent.findConfig()
             var iface: String?
             var addr: String?
@@ -278,17 +371,18 @@ final class GuardState: ObservableObject {
         }.value
     }
 
-    func attemptFix(automatic: Bool) async {
-        guard let snap = snapshot else { return }
+    @discardableResult
+    func attemptFix(automatic: Bool) async -> Bool {
+        guard let snap = snapshot else { return false }
         guard let tunnel = snap.tunnel else {
             lastError = "No tunnel — connect the VPN first."
-            return
+            return false
         }
 
         if webuiEnabled, !webuiUser.isEmpty {
-            guard let url = URL(string: webuiURL) else {
-                lastError = "Invalid Web UI URL: \(webuiURL)"
-                return
+            guard let url = WebUIURLValidator.validated(webuiURL) else {
+                lastError = "Web UI must use localhost, 127.0.0.1, or ::1."
+                return false
             }
             let ui = QBWebUI(baseURL: url, user: webuiUser, password: webuiPass)
             if await ui.login() {
@@ -297,7 +391,7 @@ final class GuardState: ObservableObject {
                     lastAction = "Web UI: binding set live to \(tunnel.iface) ✓"
                     lastError = nil
                     await checkNow()
-                    return
+                    return true
                 }
             }
             lastError = "Web UI login failed (check URL / user / password)."
@@ -305,9 +399,12 @@ final class GuardState: ObservableObject {
 
         if snap.qbRunning {
             lastError = "qBittorrent is still running — quit it (button below) or enable the Web UI."
-            if automatic { postNotification("Surfshark Guard — action needed",
-                                            "qBittorrent is on the wrong binding. Quit the app so the fix can apply.") }
-            return
+            if automatic, notifications, autoFixBlockedNotification.shouldPost() {
+                postNotification("Surfshark Guard — action needed",
+                                 "qBittorrent is on the wrong binding. Quit the app so the fix can apply.")
+                lastNotifiedStatus = .wrongBinding
+            }
+            return false
         }
 
         do {
@@ -320,9 +417,12 @@ final class GuardState: ObservableObject {
                 postNotification("Surfshark Guard — binding fixed",
                                  "qBittorrent is quit — binding is now \(tunnel.iface). Start it again.")
             }
+            autoFixBlockedNotification.reset()
             await checkNow()
+            return true
         } catch {
             lastError = "Could not write the config: \(error.localizedDescription)"
+            return false
         }
     }
 
@@ -332,7 +432,7 @@ final class GuardState: ObservableObject {
                 || $0.localizedName?.lowercased().contains("qbittorrent") == true
         }
         guard !apps.isEmpty else {
-            await attemptFix(automatic: false)
+            _ = await attemptFix(automatic: false)
             return
         }
         lastAction = "Quitting qBittorrent…"
@@ -343,7 +443,7 @@ final class GuardState: ObservableObject {
         }
         if !Detector.qbittorrentRunning() {
             await checkNow(notifyAbout: false)
-            await attemptFix(automatic: false)
+            _ = await attemptFix(automatic: false)
         }
     }
 
@@ -419,8 +519,8 @@ final class GuardState: ObservableObject {
 
     func testWebUILogin() async {
         loginTestResult = nil
-        guard let url = URL(string: webuiURL) else {
-            loginTestResult = "Invalid URL"
+        guard let url = WebUIURLValidator.validated(webuiURL) else {
+            loginTestResult = "Use a local Web UI URL (localhost, 127.0.0.1, or ::1)"
             return
         }
         let ui = QBWebUI(baseURL: url, user: webuiUser, password: webuiPass)
@@ -433,7 +533,7 @@ final class GuardState: ObservableObject {
 
     private func pauseTorrentsIfNeeded() async {
         guard pauseOnDrop, webuiEnabled, !webuiUser.isEmpty,
-              let url = URL(string: webuiURL) else { return }
+              let url = WebUIURLValidator.validated(webuiURL) else { return }
         let ui = QBWebUI(baseURL: url, user: webuiUser, password: webuiPass)
         guard await ui.login() else { return }
         if await ui.pauseAllTorrents() {

@@ -37,26 +37,43 @@ enum Shell {
 
 enum Detector {
     static func vpnProcesses(for provider: VPNProvider) -> [String] {
-        let out = Shell.run("/usr/bin/pgrep", ["-ifl", provider.pgrepPattern])
-        return out.split(separator: "\n")
+        vpnProcesses(
+            for: provider,
+            output: Shell.run("/usr/bin/pgrep", ["-ifl", provider.pgrepPattern])
+        )
+    }
+
+    static func vpnProcesses(for provider: VPNProvider, output: String) -> [String] {
+        output.split(separator: "\n")
             .map(String.init)
             .filter { provider.matches($0) }
     }
 
     static func detect(provider: VPNProvider = .auto) -> TunnelInfo? {
-        let ifaces = IfconfigParser.parse(
-            Shell.run("/sbin/ifconfig", ["-a"]))
-        let procs = vpnProcesses(for: provider)
+        detect(
+            provider: provider,
+            ifconfigText: Shell.run("/sbin/ifconfig", ["-a"]),
+            routeText: Shell.run("/sbin/route", ["-n", "get", "default"]),
+            netstatText: Shell.run("/usr/sbin/netstat", ["-rn", "-f", "inet"]),
+            processText: Shell.run("/usr/bin/pgrep", ["-ifl", provider.pgrepPattern])
+        )
+    }
+
+    static func detect(provider: VPNProvider,
+                       ifconfigText: String,
+                       routeText: String,
+                       netstatText: String,
+                       processText: String) -> TunnelInfo? {
+        let ifaces = IfconfigParser.parse(ifconfigText)
+        let procs = vpnProcesses(for: provider, output: processText)
         let running = !procs.isEmpty
         let vpnName = provider.label(in: procs)
         let wgHint = procs.contains { $0.lowercased().contains("wireguard") }
             || provider == .wireguard
 
         let vpnIfaces = ifaces.filter { isVPNInterface($0.key) && $0.value.ipv4 != nil }
-        let defaultIface = RouteParser.defaultInterface(
-            from: Shell.run("/sbin/route", ["-n", "get", "default"]))
-        let routed = NetstatParser.tunnelCandidates(
-            from: Shell.run("/usr/sbin/netstat", ["-rn", "-f", "inet"]))
+        let defaultIface = RouteParser.defaultInterface(from: routeText)
+        let routed = NetstatParser.tunnelCandidates(from: netstatText)
 
         var why: [String] = []
         var chosen: String?

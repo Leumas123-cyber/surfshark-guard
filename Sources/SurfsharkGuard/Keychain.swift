@@ -40,7 +40,11 @@ enum KeychainStore {
             kSecAttrAccount as String: account,
         ]
         if SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess {
-            let update: [String: Any] = [kSecValueData as String: data]
+            let update: [String: Any] = [
+                kSecValueData as String: data,
+                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+                kSecAttrSynchronizable as String: false,
+            ]
             return SecItemUpdate(query as CFDictionary, update as CFDictionary) == errSecSuccess
         }
         var add = query

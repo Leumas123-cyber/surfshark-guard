@@ -15,6 +15,20 @@ if [ -d /Applications/Xcode.app/Contents/Developer ]; then
   export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 fi
 
+SIGNING_IDENTITY="${CODESIGN_IDENTITY:-}"
+if [ -z "$SIGNING_IDENTITY" ]; then
+  SIGNING_IDENTITY="$(
+    security find-identity -v -p codesigning 2>/dev/null \
+      | awk -F'"' '/Developer ID Application/ { print $2; exit }'
+  )"
+fi
+if [ -z "$SIGNING_IDENTITY" ]; then
+  SIGNING_IDENTITY="-"
+  echo "▸ No Developer ID identity found; using ad-hoc signing."
+else
+  echo "▸ Signing with: $SIGNING_IDENTITY"
+fi
+
 # Full Xcode (or GitHub's macos-14 image) can run XCTest. Command Line Tools
 # alone often cannot load XCTest/Testing — skip locally, fail in CI.
 if [ -n "${CI:-}" ] || [ -d /Applications/Xcode.app/Contents/Developer ]; then
@@ -107,8 +121,14 @@ package_app() {
     cp Assets/AppIcon.icns "$dest/Contents/Resources/AppIcon.icns"
   fi
   strip -xS "$dest/Contents/MacOS/SurfsharkGuard"
-  codesign --force --sign - --timestamp=none "$dest"
   xattr -cr "$dest" 2>/dev/null || true
+  if [ "$SIGNING_IDENTITY" = "-" ]; then
+    codesign --force --sign - --timestamp=none "$dest"
+  else
+    codesign --force --sign "$SIGNING_IDENTITY" \
+      --options runtime --timestamp "$dest"
+  fi
+  codesign --verify --deep --strict --verbose=2 "$dest"
   touch "$dest"
 
   local arches

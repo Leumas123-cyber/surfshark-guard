@@ -14,11 +14,47 @@ enum WebUIReachability: Equatable {
     }
 }
 
+enum WebUIURLValidator {
+    static func isAllowed(_ url: URL) -> Bool {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              components.user == nil,
+              components.password == nil,
+              let rawHost = components.host?.lowercased()
+        else { return false }
+
+        let host = rawHost.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        return host == "127.0.0.1" || host == "localhost" || host == "::1"
+    }
+
+    static func validated(_ rawValue: String) -> URL? {
+        guard let url = URL(string: rawValue), isAllowed(url) else { return nil }
+        return url
+    }
+}
+
 /// Minimal qBittorrent Web API client — live interface rebinding only.
 struct QBWebUI {
     let baseURL: URL
     let user: String
     let password: String
+    private let session: URLSession
+
+    init(baseURL: URL, user: String, password: String, session: URLSession? = nil) {
+        self.baseURL = baseURL
+        self.user = user
+        self.password = password
+        self.session = session ?? Self.makeSession()
+    }
+
+    private static func makeSession() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 2
+        config.timeoutIntervalForResource = 4
+        config.waitsForConnectivity = false
+        return URLSession(configuration: config)
+    }
 
     static func endpoint(_ path: String, on baseURL: URL) -> URL {
         let trimmed = path.hasPrefix("/") ? String(path.dropFirst()) : path
@@ -31,6 +67,9 @@ struct QBWebUI {
     }
 
     private func post(_ path: String, form: [String: String]) async throws -> (body: String, code: Int) {
+        guard WebUIURLValidator.isAllowed(baseURL) else {
+            throw URLError(.unsupportedURL)
+        }
         var components = URLComponents()
         components.queryItems = form.map {
             URLQueryItem(name: $0.key, value: $0.value)
@@ -42,7 +81,7 @@ struct QBWebUI {
         request.setValue("application/x-www-form-urlencoded",
                          forHTTPHeaderField: "Content-Type")
         request.setValue(baseURL.absoluteString, forHTTPHeaderField: "Referer")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
         return (String(data: data, encoding: .utf8) ?? "", code)
     }
@@ -57,6 +96,7 @@ struct QBWebUI {
 
     /// Cheap reachability: any HTTP answer means the Web UI is up (403 is fine).
     static func probe(baseURL: URL) async -> WebUIReachability {
+        guard WebUIURLValidator.isAllowed(baseURL) else { return .offline }
         var request = URLRequest(url: endpoint("/api/v2/app/version", on: baseURL))
         request.httpMethod = "GET"
         request.timeoutInterval = 1.5
@@ -70,20 +110,23 @@ struct QBWebUI {
     }
 
     func login() async -> Bool {
-        guard !user.isEmpty else { return false }
+        guard WebUIURLValidator.isAllowed(baseURL), !user.isEmpty else { return false }
         let result = try? await post("/api/v2/auth/login",
                                      form: ["username": user, "password": password])
-        return result?.body.contains("Ok") == true
+        guard let result, (200...299).contains(result.code) else { return false }
+        let body = result.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        return body == "Ok." || body == "Ok"
     }
 
     /// Live NIC from a running qBittorrent (ini can be stale).
     func currentBinding() async -> (iface: String?, addr: String?)? {
+        guard WebUIURLValidator.isAllowed(baseURL) else { return nil }
         var request = URLRequest(url: Self.endpoint("/api/v2/app/preferences", on: baseURL))
         request.httpMethod = "GET"
         request.timeoutInterval = 2
         request.setValue(baseURL.absoluteString, forHTTPHeaderField: "Referer")
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await session.data(for: request)
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             guard (200...299).contains(code),
                   let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -103,6 +146,7 @@ struct QBWebUI {
 
     /// qB 4.x uses pause; qB 5.x uses stop.
     func pauseAllTorrents() async -> Bool {
+        guard WebUIURLValidator.isAllowed(baseURL) else { return false }
         for path in ["/api/v2/torrents/stop", "/api/v2/torrents/pause"] {
             if let result = try? await post(path, form: ["hashes": "all"]),
                (200...299).contains(result.code) {
@@ -115,6 +159,7 @@ struct QBWebUI {
     /// `current_network_interface` is the older qBittorrent key; unknown
     /// keys are ignored, so sending both is safe.
     func setInterface(_ name: String, address: String?) async -> Bool {
+        guard WebUIURLValidator.isAllowed(baseURL) else { return false }
         var prefs: [String: Any] = [
             "current_interface_name": name,
             "current_network_interface": name,
@@ -124,9 +169,9 @@ struct QBWebUI {
               let jsonText = String(data: json, encoding: .utf8)
         else { return false }
         do {
-            _ = try await post("/api/v2/app/setPreferences",
-                              form: ["json": jsonText])
-            return true
+            let result = try await post("/api/v2/app/setPreferences",
+                                        form: ["json": jsonText])
+            return (200...299).contains(result.code)
         } catch { return false }
     }
 }
