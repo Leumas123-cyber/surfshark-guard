@@ -25,7 +25,7 @@ fi
 
 NOTES="$(cat <<EOF
 Unofficial menu-bar helper. Builds use Developer ID signing and notarization
-when the repository's Apple release secrets are configured; otherwise they are
+when all Apple release secrets are configured; otherwise they are
 ad-hoc signed and require right-click → Open the first time.
 
 These DMGs were built by GitHub Actions (macos-14), not a personal Mac.
